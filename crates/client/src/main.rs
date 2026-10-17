@@ -4,6 +4,7 @@
 //! Sin argumentos abre el menú principal (campaña, mundo libre, oleadas).
 //! `--shot` saca una captura a los pocos segundos y cierra (sirve para revisar cambios sin jugar).
 
+mod ambience;
 mod arena_cycle;
 mod audio;
 mod campaign_ui;
@@ -100,7 +101,7 @@ fn main() {
         .insert_resource(start_mode(&args))
         .insert_resource(args)
         .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin, render_scale::RenderScalePlugin, gun::GunPlugin, fx::FxPlugin, audio::AudioSynthPlugin, enemies_view::EnemiesViewPlugin, markers::MarkersPlugin, perks::PerksPlugin, tacmap::TacMapPlugin, hook_view::HookViewPlugin, vehicles_view::VehiclesViewPlugin))
-        .add_plugins((daynight::DayNightPlugin, shop::ShopPlugin, extras_view::ExtrasViewPlugin, people_view::PeopleViewPlugin, subway::SubwayPlugin, campaign_ui::CampaignUiPlugin, decals::DecalsPlugin, feed_ui::FeedUiPlugin, arena_cycle::ArenaCyclePlugin, streets_ui::StreetsUiPlugin, humanoid::HumanoidPlugin))
+        .add_plugins((daynight::DayNightPlugin, shop::ShopPlugin, extras_view::ExtrasViewPlugin, people_view::PeopleViewPlugin, subway::SubwayPlugin, campaign_ui::CampaignUiPlugin, decals::DecalsPlugin, feed_ui::FeedUiPlugin, arena_cycle::ArenaCyclePlugin, streets_ui::StreetsUiPlugin, humanoid::HumanoidPlugin, ambience::AmbiencePlugin))
         .add_systems(PreStartup, setup)
         .add_systems(Update, (world_render::follow_sky, world_render::animate_lava, auto_shot, bench))
         .run();

@@ -270,6 +270,12 @@ pub enum S {
     Streak,
     /// "Voz" de la radio: un pitido corto cada pocas letras.
     Blip,
+    /// Bocina de auto (dos tonos).
+    Horn,
+    /// Ladrido de perro.
+    Bark,
+    /// Gaviota.
+    Gull,
 }
 
 fn render(s: S) -> Pcm {
@@ -389,6 +395,22 @@ fn render(s: S) -> Pcm {
             b.noise(0.0, 220.0, 0.6, 1.6, 0.35, Low);
         }
         S::Blip => b.tone(0.0, Square, 880.0, 820.0, 0.025, 0.035),
+        S::Horn => {
+            b.tone(0.0, Square, 415.0, 415.0, 0.32, 0.08);
+            b.tone(0.0, Square, 523.0, 523.0, 0.32, 0.06);
+        }
+        S::Bark => {
+            for k in 0..2 {
+                let at = k as f32 * 0.24;
+                b.noise(at, 700.0, 1.5, 0.12, 0.5, Band);
+                b.tone(at, Saw, 420.0, 260.0, 0.11, 0.12);
+            }
+        }
+        S::Gull => {
+            b.tone(0.0, Saw, 1900.0, 1300.0, 0.18, 0.05);
+            b.tone(0.22, Saw, 2000.0, 1400.0, 0.14, 0.04);
+            b.tone(0.4, Saw, 1800.0, 1200.0, 0.22, 0.04);
+        }
         S::Streak => {
             b.tone(0.0, Square, 660.0, 660.0, 0.07, 0.07);
             b.tone(0.07, Square, 880.0, 880.0, 0.07, 0.07);
@@ -403,10 +425,10 @@ fn render(s: S) -> Pcm {
     b.into_pcm(MASTER, false)
 }
 
-const ALL: [S; 39] = [
+const ALL: [S; 42] = [
     S::Shot(0), S::Shot(1), S::Shot(2), S::Siren, S::Whiz, S::EShot, S::EShotBig, S::AlertBeep, S::Tag, S::Takedown, S::Plant, S::Objective,
     S::Ricochet, S::Hit, S::Crit, S::Hook, S::HookMiss, S::Launch, S::Dash, S::Perk, S::Boss, S::Kill, S::Boom, S::Enemy, S::Hurt, S::Reload,
-    S::Pickup, S::Empty, S::Aim, S::Swap, S::DJump, S::Slide, S::Toss, S::Beep, S::Crash, S::Train, S::Radio, S::Streak, S::Blip,
+    S::Pickup, S::Empty, S::Aim, S::Swap, S::DJump, S::Slide, S::Toss, S::Beep, S::Crash, S::Train, S::Radio, S::Streak, S::Blip, S::Horn, S::Bark, S::Gull,
 ];
 
 /// Motor: loop de 1 s con frecuencias enteras (fase continua al repetir). La velocidad de
@@ -432,6 +454,139 @@ fn engine_loop() -> Pcm {
     }
     out.truncate(n - fade);
     Pcm { samples: out.into(), looped: true }
+}
+
+/* ---------- ambientes (nuevo) ---------- */
+
+/// Capas de ambiente en loop: tránsito, gente, pájaros, agua, viento, subte y grillos.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Amb {
+    City,
+    Crowd,
+    Birds,
+    Water,
+    Wind,
+    Subway,
+    Crickets,
+}
+
+pub const AMBS: [Amb; 7] = [Amb::City, Amb::Crowd, Amb::Birds, Amb::Water, Amb::Wind, Amb::Subway, Amb::Crickets];
+
+/// Ruido marrón (integrado) normalizado: base de tránsito, agua y viento.
+fn brown(b: &mut Buf, n: usize) -> Vec<f32> {
+    let mut out = vec![0.0f32; n];
+    let mut acc = 0.0f32;
+    for v in out.iter_mut() {
+        acc = (acc + b.white() * 0.02) * 0.995;
+        *v = acc;
+    }
+    let peak = out.iter().fold(0.0f32, |m, v| m.max(v.abs())).max(1e-6);
+    out.iter_mut().for_each(|v| *v /= peak);
+    out
+}
+
+/// Cierra el loop cruzando el final con el principio (sin clic al repetir).
+fn seamless(mut out: Vec<f32>) -> Pcm {
+    let n = out.len();
+    let fade = (SR as usize / 4).min(n / 4);
+    for i in 0..fade {
+        let k = i as f32 / fade as f32;
+        out[i] = out[i] * k + out[n - fade + i] * (1.0 - k);
+    }
+    out.truncate(n - fade);
+    Pcm { samples: out.into(), looped: true }
+}
+
+pub fn ambience(a: Amb) -> Pcm {
+    let secs = 8.0;
+    let n = (secs * SR as f32) as usize;
+    let mut b = Buf::new(0.0);
+    let tau = std::f32::consts::TAU;
+    let out = match a {
+        Amb::City => {
+            // rumor grave de tránsito con autos que pasan (subidas lentas de volumen)
+            let br = brown(&mut b, n);
+            let mut lp = Biquad::new(Filt::Low, 380.0, 0.7);
+            (0..n).map(|k| {
+                let t = k as f32 / SR as f32;
+                let swell = 0.6 + 0.25 * (t * tau / 3.7).sin() + 0.15 * (t * tau / 1.9 + 1.0).sin();
+                lp.run(br[k]) * 0.9 * swell
+            }).collect()
+        }
+        Amb::Crowd => {
+            // murmullo: ruido en la banda de la voz con "sílabas" que suben y bajan
+            let mut bp = Biquad::new(Filt::Band, 520.0, 1.2);
+            let mut bp2 = Biquad::new(Filt::Band, 1300.0, 2.0);
+            (0..n).map(|k| {
+                let t = k as f32 / SR as f32;
+                let syl = (0.5 + 0.5 * (t * tau * 3.1).sin()) * (0.6 + 0.4 * (t * tau * 0.7).sin());
+                let w = b.white();
+                (bp.run(w) * 0.8 + bp2.run(w) * 0.3) * syl * 0.9
+            }).collect()
+        }
+        Amb::Birds => {
+            // brisa suave y gorjeos cortos al azar
+            let mut lp = Biquad::new(Filt::Low, 900.0, 0.7);
+            let mut out: Vec<f32> = (0..n).map(|_| lp.run(b.white()) * 0.05).collect();
+            let mut r = 7u32;
+            for _ in 0..34 {
+                r = r.wrapping_mul(1664525).wrapping_add(1013904223);
+                let at = (r >> 8) as f32 / 16_777_216.0 * (secs - 0.6);
+                let f0 = 2600.0 + ((r >> 4) % 2200) as f32;
+                let notes = 2 + (r % 4) as usize;
+                for j in 0..notes {
+                    let st = ((at + j as f32 * 0.09) * SR as f32) as usize;
+                    let len = (0.06 * SR as f32) as usize;
+                    for i in 0..len {
+                        let t = i as f32 / SR as f32;
+                        let f = f0 * (1.0 + 0.25 * (t / 0.06)) * if j % 2 == 0 { 1.0 } else { 1.15 };
+                        let env = (std::f32::consts::PI * i as f32 / len as f32).sin();
+                        if st + i < n {
+                            out[st + i] += (t * f * tau).sin() * env * 0.18;
+                        }
+                    }
+                }
+            }
+            out
+        }
+        Amb::Water => {
+            // agua contra el muelle: ruido grave con chapoteos lentos
+            let br = brown(&mut b, n);
+            let mut bp = Biquad::new(Filt::Band, 600.0, 0.8);
+            (0..n).map(|k| {
+                let t = k as f32 / SR as f32;
+                let lap = 0.5 + 0.5 * (t * tau / 2.3).sin().max(0.0).powf(0.6);
+                (br[k] * 0.5 + bp.run(b.white()) * 0.25) * lap
+            }).collect()
+        }
+        Amb::Wind => {
+            let mut bp = Biquad::new(Filt::Band, 420.0, 0.6);
+            (0..n).map(|k| {
+                let t = k as f32 / SR as f32;
+                let gust = 0.45 + 0.35 * (t * tau / 5.3).sin() + 0.2 * (t * tau / 2.1).sin();
+                bp.run(b.white()) * gust * 0.9
+            }).collect()
+        }
+        Amb::Subway => {
+            let mut lp = Biquad::new(Filt::Low, 240.0, 0.7);
+            (0..n).map(|k| {
+                let t = k as f32 / SR as f32;
+                (t * 50.0 * tau).sin() * 0.11 + (t * 100.0 * tau).sin() * 0.05 + lp.run(b.white()) * 0.14
+            }).collect()
+        }
+        Amb::Crickets => {
+            let mut out = vec![0.0f32; n];
+            for (c, f) in [(0.0f32, 4300.0f32), (0.37, 4700.0), (0.71, 3900.0)] {
+                for k in 0..n {
+                    let t = k as f32 / SR as f32 + c;
+                    let chirp = ((t * 3.0).fract() < 0.18) as u8 as f32 * (0.5 + 0.5 * (t * tau * 30.0).sin());
+                    out[k] += (t * f * tau).sin() * chirp * 0.12;
+                }
+            }
+            out
+        }
+    };
+    seamless(out)
 }
 
 /* ---------- música ---------- */
@@ -594,6 +749,78 @@ fn mute_key(key: Res<ButtonInput<KeyCode>>, mut vol: ResMut<MusicVol>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `ARENA_WAV=archivo.wav cargo test -p arena_client muestra`: 28 s pasando por la calle, la plaza,
+    /// la costanera, una azotea, el subte y la noche, con bocinas, perros y gaviotas.
+    #[test]
+    fn muestra_de_ambientes() {
+        let Some(path) = std::env::var_os("ARENA_WAV") else { return };
+        let seg = 4.0;
+        let plan: [(&[(Amb, f32)], Option<S>); 7] = [
+            (&[(Amb::City, 0.6), (Amb::Crowd, 0.5)], Some(S::Horn)),
+            (&[(Amb::City, 0.25), (Amb::Birds, 0.7), (Amb::Crowd, 0.2)], None),
+            (&[(Amb::City, 0.15), (Amb::Water, 0.8)], Some(S::Gull)),
+            (&[(Amb::Wind, 0.9), (Amb::City, 0.15)], None),
+            (&[(Amb::Subway, 0.9)], Some(S::Train)),
+            (&[(Amb::Crickets, 0.6), (Amb::City, 0.15)], Some(S::Bark)),
+            (&[(Amb::City, 0.6), (Amb::Crowd, 0.6)], Some(S::Horn)),
+        ];
+        let loops: Vec<(Amb, Pcm)> = AMBS.iter().map(|&a| (a, ambience(a))).collect();
+        let n = (seg * plan.len() as f32 * SR as f32) as usize;
+        let mut out = vec![0.0f32; n];
+        for (k, (layers, shot)) in plan.iter().enumerate() {
+            let st = (k as f32 * seg * SR as f32) as usize;
+            let len = (seg * SR as f32) as usize;
+            for &(a, vol) in layers.iter() {
+                let p = &loops.iter().find(|l| l.0 == a).unwrap().1.samples;
+                for i in 0..len {
+                    // fundido de medio segundo entre lugares
+                    let f = (i as f32 / (SR as f32 * 0.5)).min(1.0).min((len - i) as f32 / (SR as f32 * 0.5));
+                    out[st + i] += p[(st + i) % p.len()] * vol * f;
+                }
+            }
+            if let Some(s) = shot {
+                let p = render(*s);
+                for (i, v) in p.samples.iter().enumerate() {
+                    if st + SR as usize + i < n {
+                        out[st + SR as usize + i] += v * 0.8;
+                    }
+                }
+            }
+        }
+        let mut wav = Vec::new();
+        let data_len = (n * 2) as u32;
+        wav.extend(b"RIFF");
+        wav.extend((36 + data_len).to_le_bytes());
+        wav.extend(b"WAVEfmt ");
+        wav.extend(16u32.to_le_bytes());
+        wav.extend(1u16.to_le_bytes());
+        wav.extend(1u16.to_le_bytes());
+        wav.extend(SR.to_le_bytes());
+        wav.extend((SR * 2).to_le_bytes());
+        wav.extend(2u16.to_le_bytes());
+        wav.extend(16u16.to_le_bytes());
+        wav.extend(b"data");
+        wav.extend(data_len.to_le_bytes());
+        for v in out {
+            wav.extend(((v.clamp(-1.0, 1.0) * 30000.0) as i16).to_le_bytes());
+        }
+        std::fs::write(path, wav).unwrap();
+    }
+
+    #[test]
+    fn ambientes_suenan_sin_saturar_ni_cortarse() {
+        for a in AMBS {
+            let p = ambience(a);
+            let s = &p.samples;
+            assert!(s.len() > SR as usize * 5, "{a:?} corto");
+            let peak = s.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            let rms = (s.iter().map(|v| v * v).sum::<f32>() / s.len() as f32).sqrt();
+            assert!(peak <= 1.0 && rms > 0.005, "{a:?}: pico {peak}, rms {rms}");
+            // el final empalma con el principio
+            assert!((s[s.len() - 1] - s[0]).abs() < 0.25, "{a:?} hace clic al repetir");
+        }
+    }
 
     #[test]
     fn todos_los_efectos_suenan_y_no_saturan() {
