@@ -195,8 +195,8 @@ fn spawn_hud(mut commands: Commands, mut font_assets: ResMut<Assets<Font>>, mut 
     let centered = Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..full.clone() };
 
     // viñetas y mira del riel
-    commands.spawn((full.clone(), ImageNode::new(images.add(vignette([0.0, 0.0, 0.0], 0.55, 0.55))), Visibility::Hidden, Overlay::Aim));
-    commands.spawn((full.clone(), ImageNode::new(images.add(vignette([1.0, 0.157, 0.275], 0.45, 0.55))), Visibility::Hidden, Overlay::Hurt));
+    commands.spawn((full.clone(), ImageNode::new(images.add(vignette([0.0, 0.0, 0.0], 0.55, 0.55))).with_mode(NodeImageMode::Stretch), Visibility::Hidden, Overlay::Aim));
+    commands.spawn((full.clone(), ImageNode::new(images.add(vignette([1.0, 0.157, 0.275], 0.45, 0.55))).with_mode(NodeImageMode::Stretch), Visibility::Hidden, Overlay::Hurt));
     commands.spawn((centered.clone(), Visibility::Hidden, Overlay::Scope)).with_children(|p| {
         p.spawn((Node { width: vmin(80), height: vmin(80), ..default() }, ImageNode::new(images.add(scope_lens())), Outline { width: vmax(200), offset: px(0), color: Color::srgb(0.016, 0.024, 0.027) }));
     });

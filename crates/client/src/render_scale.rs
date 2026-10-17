@@ -50,7 +50,7 @@ fn setup(
     commands.spawn((Camera2d, Camera { order: 2, ..default() }, Msaa::Off, IsDefaultUiCamera));
     commands.spawn((
         Node { position_type: PositionType::Absolute, width: percent(100), height: percent(100), ..default() },
-        ImageNode::new(image.clone()),
+        ImageNode::new(image.clone()).with_mode(NodeImageMode::Stretch),
         GlobalZIndex(-100),
     ));
     commands.insert_resource(SceneTarget { image, size });
