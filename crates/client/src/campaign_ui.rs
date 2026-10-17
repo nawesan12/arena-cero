@@ -2,6 +2,7 @@
 //! la operación con rango S/A/B/C y progreso guardado (`campana` y `rangos` en `~/.arena-cero`).
 //! La lógica de las operaciones vive en `arena_sim::campaign`; acá solo se muestra y se elige.
 
+use crate::online::{Online, Role};
 use crate::game::{GameRes, UiFeed};
 use crate::hud::Fonts;
 use crate::perks::PerkState;
@@ -35,7 +36,7 @@ impl Plugin for CampaignUiPlugin {
             .init_resource::<Briefing>()
             .insert_resource(Progress::load())
             .add_systems(PostStartup, (spawn, first_screen).chain())
-            .add_systems(Update, (menu_input, menu_draw, debrief, briefing, objective_panel, radio_panel).chain());
+            .add_systems(Update, (online_glue, menu_input, menu_draw, debrief, briefing, objective_panel, radio_panel).chain());
     }
 }
 
@@ -60,6 +61,7 @@ enum Page {
     Ops,
     Waves,
     Options,
+    Online,
 }
 
 /// Lo que se puede ajustar en la página de opciones.
@@ -310,6 +312,60 @@ fn first_screen(mode: Res<StartMode>, mut open: ResMut<MenuOpen>, mut menu: ResM
     }
 }
 
+/// Online, cada cuadro: arrancar con `--host`/`--join`, armar la partida que manda el servidor,
+/// y volver al menú si se corta.
+#[allow(clippy::too_many_arguments)]
+fn online_glue(args: Res<crate::Args>, mut net: ResMut<Online>, mut open: ResMut<MenuOpen>, mut menu: ResMut<Menu>, mut exit: MessageWriter<AppExit>, mut p: Params, mut started: Local<bool>) {
+    if !*started {
+        *started = true;
+        net.name = crate::config::get("nombre").unwrap_or_default();
+        if args.host {
+            net.host(&p.game.0, &p.level.0);
+            p.ui.banner("PARTIDA ABIERTA", net.status.clone());
+        } else if let Some(a) = args.join {
+            net.join(a);
+            open.0 = true;
+            menu.page = Page::Online;
+        }
+    }
+    let Role::Client(r) = &mut net.role else { return };
+    if r.net.is_disconnected() {
+        let was = r.ready;
+        net.stop();
+        net.status = if was { "Se cortó la conexión con la partida".into() } else { "No se pudo conectar (¿IP y puerto bien? ¿el anfitrión abrió la partida?)".into() };
+        p.ui.banner("SIN CONEXIÓN", net.status.clone());
+        // la partida que quedó era una copia: vuelve el mundo libre de fondo
+        if p.level.0.info.city {
+            start_free(&mut p);
+        }
+        open.0 = true;
+        menu.playing = false;
+        menu.page = Page::Online;
+        menu.sel = 0;
+        return;
+    }
+    let Some(mode) = r.net.new_game.take().or(if r.ready { None } else { r.net.mode }) else { return };
+    let map = mode.map();
+    if map != p.level.0.info.id {
+        // otro mapa: se reabre el juego en ese mapa y se vuelve a conectar solo
+        let addr = r.addr.to_string();
+        relaunch(&["--map", map_arg(map), "--join", &addr], &mut exit);
+        return;
+    }
+    r.ready = true;
+    p.game.0.teardown(&mut p.level.0.world);
+    p.level.0 = build_level(map);
+    p.game.0 = mode.new_game(&mut p.level.0);
+    p.game.1 += 1;
+    let (at, yaw) = crate::online::join_spot(&p.game.0, &p.level.0);
+    reset_player(&mut p, at, yaw);
+    p.ui.banner("EN LA PARTIDA", mode.label());
+    open.0 = false;
+    menu.playing = true;
+    menu.page = Page::Main;
+    menu.sel = 0;
+}
+
 /// Briefing de la operación que está por empezar (la partida espera hasta Enter).
 #[derive(Resource, Default)]
 struct Briefing(Option<usize>);
@@ -410,12 +466,20 @@ enum Act {
     Opt(u8),
     /// Volver a empezar la operación en curso.
     Restart(usize),
+    OnlinePage,
+    /// Abrir online: 0 la partida actual, 1 campaña, 2 mundo libre, 3 oleadas.
+    Host(u8),
+    JoinLan(usize),
+    /// Campo de texto: 0 nombre, 1 IP (Enter se une).
+    Text(u8),
+    StopOnline,
     None,
 }
 
-fn rows(menu: &Menu, prog: &Progress, o: &OptVals, camp: Option<usize>) -> Vec<(String, String, bool, Act)> {
+fn rows(menu: &Menu, prog: &Progress, o: &OptVals, camp: Option<usize>, net: &Online) -> Vec<(String, String, bool, Act)> {
     let mut v = Vec::new();
     match menu.page {
+        Page::Online => online_rows(menu, prog, net, &mut v),
         Page::Main => {
             if menu.playing {
                 v.push(("VOLVER A LA PARTIDA".into(), "ESC".into(), true, Act::Resume));
@@ -432,6 +496,12 @@ fn rows(menu: &Menu, prog: &Progress, o: &OptVals, camp: Option<usize>) -> Vec<(
             v.push(("ELEGIR OPERACIÓN".into(), format!("{}/{} DESBLOQUEADAS", (prog.unlocked + 1).min(N_OPS), N_OPS), true, Act::OpsPage));
             v.push(("MUNDO LIBRE".into(), "DISTRITO SUR SIN GUION".into(), true, Act::Free));
             v.push(("OLEADAS".into(), "ARENAS CERRADAS".into(), true, Act::WavesPage));
+            let sub = match &net.role {
+                Role::Off => "COOPERATIVO HASTA 4 · LAN O INTERNET".to_string(),
+                Role::Host(h) => format!("PARTIDA ABIERTA · {} CONECTADOS", h.player_count()),
+                Role::Client(r) => format!("CONECTADO A {}", r.addr),
+            };
+            v.push(("JUGAR ONLINE".into(), sub, true, Act::OnlinePage));
             v.push(("OPCIONES".into(), "MOUSE · SONIDO · GRÁFICOS".into(), true, Act::OptionsPage));
             v.push(("SALIR".into(), String::new(), true, Act::Quit));
         }
@@ -468,6 +538,63 @@ fn rows(menu: &Menu, prog: &Progress, o: &OptVals, camp: Option<usize>) -> Vec<(
     v
 }
 
+fn online_rows(menu: &Menu, prog: &Progress, net: &Online, v: &mut Vec<(String, String, bool, Act)>) {
+    let cursor = |on: bool| if on { "_" } else { "" };
+    let sel_act = |k: u8| v.len() == menu.sel && k < 2;
+    match &net.role {
+        Role::Off => {
+            let editing = sel_act(0);
+            v.push(("TU NOMBRE".into(), format!("{}{}", net.name.to_uppercase(), cursor(editing)), true, Act::Text(0)));
+            if menu.playing {
+                v.push(("ABRIR ESTA PARTIDA".into(), "LOS DEMÁS SE SUMAN A LO QUE ESTÁS JUGANDO".into(), true, Act::Host(0)));
+            }
+            let n = prog.unlocked.min(N_OPS - 1);
+            v.push(("CREAR · CAMPAÑA".into(), format!("OP {} · {}", n + 1, OP_NAMES[n].to_uppercase()), true, Act::Host(1)));
+            v.push(("CREAR · MUNDO LIBRE".into(), "DISTRITO SUR".into(), true, Act::Host(2)));
+            v.push(("CREAR · OLEADAS".into(), "DEPÓSITO · REINICIA EL JUEGO".into(), true, Act::Host(3)));
+            let found = net.scanner.as_ref().map(|s| s.found.as_slice()).unwrap_or_default();
+            if found.is_empty() {
+                v.push(("BUSCANDO EN LA RED LOCAL…".into(), String::new(), false, Act::None));
+            }
+            for (i, f) in found.iter().enumerate().take(3) {
+                v.push((format!("UNIRSE · {}", f.name.to_uppercase()), format!("{} · {}/4 · {}", f.mode.to_uppercase(), f.players, f.addr.ip()), true, Act::JoinLan(i)));
+            }
+            let editing = v.len() == menu.sel;
+            v.push(("UNIRSE POR IP".into(), format!("{}{}", if net.ip.is_empty() && !editing { "ESCRIBÍ LA IP Y ENTER".to_string() } else { net.ip.clone() }, cursor(editing)), true, Act::Text(1)));
+        }
+        Role::Host(h) => {
+            v.push(("PARTIDA ABIERTA".into(), net.status.to_uppercase(), false, Act::None));
+            for (id, name) in h.names.iter().take(3) {
+                v.push((format!("JUGADOR {id} · {}", name.to_uppercase()), "CONECTADO".into(), false, Act::None));
+            }
+            v.push(("CERRAR LA PARTIDA ONLINE".into(), "LOS DEMÁS QUEDAN AFUERA".into(), true, Act::StopOnline));
+        }
+        Role::Client(r) => {
+            let state = if r.ready { format!("CONECTADO A {} · {:.0} MS", r.addr, r.net.rtt_ms()) } else { net.status.to_uppercase() };
+            v.push((if r.ready { "EN LA PARTIDA".into() } else { "CONECTANDO…".into() }, state, false, Act::None));
+            for (id, name) in r.net.players.iter().take(4) {
+                v.push((format!("JUGADOR {id} · {}", name.to_uppercase()), if Some(*id) == r.net.you { "VOS".into() } else { String::new() }, false, Act::None));
+            }
+            v.push(("DESCONECTARSE".into(), String::new(), true, Act::StopOnline));
+        }
+    }
+    if !net.status.is_empty() && matches!(net.role, Role::Off) {
+        v.push(("AVISO".into(), net.status.to_uppercase(), false, Act::None));
+    }
+    v.push(("VOLVER".into(), "ESC".into(), true, Act::Back));
+}
+
+/// Nombre de un mapa para la línea de comandos.
+fn map_arg(m: MapId) -> &'static str {
+    match m {
+        MapId::Ciudad => "ciudad",
+        MapId::Deposito => "deposito",
+        MapId::Fundicion => "fundicion",
+        MapId::Cantera => "cantera",
+        MapId::Azotea => "azotea",
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn menu_input(
     key: Res<ButtonInput<KeyCode>>,
@@ -481,6 +608,7 @@ fn menu_input(
     mut snd: ResMut<crate::audio::Sounds>,
     mut p: Params,
     mut opts: Opts,
+    (mut net, mut typed): (ResMut<Online>, MessageReader<bevy::input::keyboard::KeyboardInput>),
 ) {
     let debrief = p.game.0.campaign.as_ref().is_some_and(|c| c.result.is_some());
     // en pausa, Enter abre el menú
@@ -498,7 +626,41 @@ fn menu_input(
     cursor.visible = true;
     cursor.grab_mode = CursorGrabMode::None;
     let camp = p.game.0.campaign.as_ref().map(|c| c.op).filter(|_| menu.playing);
-    let list = rows(&menu, &prog, &opts.vals(), camp);
+    let list = rows(&menu, &prog, &opts.vals(), camp, &net);
+    // campos de texto: lo que se escribe va al nombre o a la IP
+    let text = match list.get(menu.sel).map(|r| r.3) {
+        Some(Act::Text(k)) => Some(k),
+        _ => None,
+    };
+    if let Some(k) = text {
+        use bevy::input::ButtonState;
+        use bevy::input::keyboard::Key;
+        for ev in typed.read() {
+            if ev.state != ButtonState::Pressed {
+                continue;
+            }
+            let field = if k == 0 { &mut net.name } else { &mut net.ip };
+            match &ev.logical_key {
+                Key::Backspace => {
+                    field.pop();
+                }
+                Key::Character(c) => {
+                    for ch in c.chars() {
+                        let ok = if k == 0 { ch.is_alphanumeric() || ch == ' ' } else { ch.is_ascii_digit() || ch == '.' || ch == ':' };
+                        if ok && field.chars().count() < if k == 0 { 16 } else { 21 } {
+                            field.push(ch);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if k == 0 {
+            crate::config::set("nombre", net.name.trim());
+        }
+    } else {
+        typed.clear();
+    }
     // ← → ajustan la opción elegida
     if let Some(Act::Opt(k)) = list.get(menu.sel).map(|r| r.3) {
         let dir = if key.just_pressed(KeyCode::ArrowLeft) || key.just_pressed(KeyCode::KeyA) { -1.0 } else if key.just_pressed(KeyCode::ArrowRight) || key.just_pressed(KeyCode::KeyD) { 1.0 } else { 0.0 };
@@ -508,11 +670,11 @@ fn menu_input(
         }
     }
     let n = list.len();
-    if key.just_pressed(KeyCode::ArrowDown) || key.just_pressed(KeyCode::KeyS) {
+    if key.just_pressed(KeyCode::ArrowDown) || (text.is_none() && key.just_pressed(KeyCode::KeyS)) {
         menu.sel = (menu.sel + 1) % n;
         snd.play(crate::audio::S::Swap);
     }
-    if key.just_pressed(KeyCode::ArrowUp) || key.just_pressed(KeyCode::KeyW) {
+    if key.just_pressed(KeyCode::ArrowUp) || (text.is_none() && key.just_pressed(KeyCode::KeyW)) {
         menu.sel = (menu.sel + n - 1) % n;
         snd.play(crate::audio::S::Swap);
     }
@@ -525,7 +687,7 @@ fn menu_input(
             }
         }
     }
-    if (key.just_pressed(KeyCode::Enter) || key.just_pressed(KeyCode::Space)) && list.get(menu.sel).is_some_and(|r| r.2) {
+    if (key.just_pressed(KeyCode::Enter) || (text.is_none() && key.just_pressed(KeyCode::Space))) && list.get(menu.sel).is_some_and(|r| r.2) {
         act = list[menu.sel].3;
     }
     if key.just_pressed(KeyCode::Escape) {
@@ -583,6 +745,61 @@ fn menu_input(
             start_op(&mut p, op);
             play(&mut open, &mut menu);
         }
+        Act::OnlinePage => {
+            menu.page = Page::Online;
+            menu.sel = 0;
+            if net.scanner.is_none() {
+                net.scanner = Some(arena_net::lan::Scanner::new());
+            }
+        }
+        Act::Host(k) => {
+            net.status.clear();
+            match k {
+                0 => {}
+                1 => {
+                    let op = prog.unlocked.min(N_OPS - 1);
+                    if !city {
+                        relaunch(&["--op", &(op + 1).to_string(), "--host"], &mut exit);
+                        return;
+                    }
+                    start_op(&mut p, op);
+                }
+                2 => {
+                    if !city {
+                        relaunch(&["--libre", "--host"], &mut exit);
+                        return;
+                    }
+                    start_free(&mut p);
+                }
+                _ => {
+                    relaunch(&["--map", "deposito", "--host"], &mut exit);
+                    return;
+                }
+            }
+            net.host(&p.game.0, &p.level.0);
+            if net.active() {
+                p.ui.banner("PARTIDA ABIERTA", net.status.clone());
+                play(&mut open, &mut menu);
+            }
+        }
+        Act::JoinLan(i) => {
+            if let Some(addr) = net.scanner.as_ref().and_then(|s| s.found.get(i)).map(|f| f.addr) {
+                net.join(addr);
+            }
+        }
+        Act::Text(1) => {
+            let ip = net.ip.trim().to_owned();
+            let addr = if ip.contains(':') { ip.parse().ok() } else { format!("{ip}:{}", arena_net::PORT).parse().ok() };
+            match addr {
+                Some(a) => net.join(a),
+                None => net.status = "Esa IP no es válida (ejemplo: 192.168.0.12)".into(),
+            }
+        }
+        Act::Text(_) => return,
+        Act::StopOnline => {
+            net.stop();
+            menu.sel = 0;
+        }
     }
     snd.play(crate::audio::S::Pickup);
 }
@@ -600,6 +817,7 @@ fn menu_draw(
     mut title: Query<&mut Text, (With<MenuTitle>, Without<MenuRowText>, Without<MenuRowSub>, Without<MenuSub>)>,
     mut sub: Query<&mut Text, (With<MenuSub>, Without<MenuRowText>, Without<MenuRowSub>, Without<MenuTitle>)>,
     opt_res: (Res<crate::player::Settings>, Res<crate::audio::MusicVol>, Res<crate::audio::SfxVol>, Res<crate::quality::QualityRes>, Res<crate::quality::BloomOn>, Res<crate::hud::ShowFps>),
+    net: Res<Online>,
 ) {
     let show = open.0 && !game.0.campaign.as_ref().is_some_and(|c| c.result.is_some());
     for mut v in &mut root {
@@ -611,13 +829,14 @@ fn menu_draw(
     let (settings, music, sfx, quality, bloom, fps) = opt_res;
     let vals = OptVals { sens: settings.sens, music: music.0, sfx: sfx.0, quality: quality.label(), bloom: bloom.0, fps: fps.0 };
     let camp = game.0.campaign.as_ref().map(|c| c.op).filter(|_| menu.playing);
-    let list = rows(&menu, &prog, &vals, camp);
+    let list = rows(&menu, &prog, &vals, camp, &net);
     for mut t in &mut title {
         t.0 = match menu.page {
             Page::Main => "OPERACIONES EN EL DISTRITO SUR".into(),
             Page::Ops => "ELEGÍ LA OPERACIÓN".into(),
             Page::Waves => "OLEADAS · ELEGÍ LA ARENA".into(),
             Page::Options => "OPCIONES".into(),
+            Page::Online => "JUGAR ONLINE".into(),
         };
     }
     for mut t in &mut sub {
@@ -626,6 +845,7 @@ fn menu_draw(
             Page::Ops => "Las operaciones anteriores cuentan como hechas: la ciudad queda como la dejaste.".into(),
             Page::Waves => "Drones, kamikazes, pesados y el Coloso cada cinco oleadas.".into(),
             Page::Options => "Flechas izquierda y derecha cambian el valor. Se guarda solo.".into(),
+            Page::Online => "Cooperativo hasta 4. En la misma red aparecen solas; por internet, el anfitrión abre el puerto UDP 47800.".into(),
         };
     }
     for (r, mut v, mut b, mut bg) in &mut rows_q {
@@ -670,6 +890,7 @@ fn debrief(
     mut hint: Query<&mut Text, (With<DebriefHint>, Without<DebriefRank>, Without<DebriefTitle>, Without<DebriefBody>)>,
     mut snd: ResMut<crate::audio::Sounds>,
     mut p: Params,
+    net: Res<Online>,
 ) {
     let res = p.game.0.campaign.as_ref().and_then(|c| c.result.clone());
     for mut v in &mut root {
@@ -719,6 +940,12 @@ fn debrief(
     }
     for mut t in &mut hint {
         t.0 = if last { "¡CAMPAÑA COMPLETA!   ENTER · MENÚ   R · REPETIR".into() } else { format!("ENTER · OPERACIÓN {}: {}   R · REPETIR   ESC · MENÚ", r.op + 2, OP_NAMES[r.op + 1].to_uppercase()) };
+    }
+    if net.is_client() {
+        for mut t in &mut hint {
+            t.0 = "EL ANFITRIÓN ELIGE CÓMO SIGUE".into();
+        }
+        return;
     }
     let go = |op: usize, p: &mut Params, open: &mut MenuOpen| {
         start_op(p, op);

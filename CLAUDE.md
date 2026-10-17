@@ -15,7 +15,9 @@ Toolchain: Rust estable ≥ 1.97.1 (Bevy 0.20 lo exige). Workspace de Cargo:
 - `crates/client` (`arena_client`, binario `arena-cero`): Bevy. Texturas procedurales (`textures.rs`), materiales
   (`materials.rs`), mallas fundidas por material y zona de 88 m (`world_render.rs`), input + paso fijo + cámara
   interpolada (`player.rs`), HUD (`hud.rs`).
-- Más adelante: `crates/server` (headless, autoritativo) y `crates/net` (protocolo).
+- `crates/net` (`arena_net`): online con renet (protocolo, fotos del mundo, anfitrión, cliente, LAN) y
+  `crates/server` (`arena-cero-servidor`): servidor dedicado sin ventana. Ver `docs/ARQUITECTURA.md` → Online.
+  `cargo test -p arena_net` incluye una prueba por UDP real.
 
 Comandos:
 - `cargo test -p arena_sim` — tests de la simulación.
@@ -42,8 +44,8 @@ diagonal, rotondas, locales, subte con 3 estaciones), peatones y tránsito, ganc
 la **Campaña de operaciones** (`campaign.rs` + `campaign_ui.rs`, 10 operaciones con briefing, menú principal,
 rango), la **Ciudad 3.0** porteña (`town.rs`, `props.rs`, `city_edge.rs`), personas con esqueleto (`humanoid.rs`)
 y sonido de ciudad (`ambience.rs`).
-Falta: sensación arcade (bloom, hit-stop, combo), variedad visual de la ciudad, oleadas con cambio de mapa,
-servidor y cooperativo. Plan completo en `docs/HISTORIAL.md` ("Lo que sigue").
+Además el **online cooperativo** (anfitrión, servidor dedicado, LAN; `pawn.rs`, `crates/net`, `crates/server`).
+Falta: probar el online entre dos máquinas, autos y subte siendo cliente, ragdoll. Plan completo en `docs/HISTORIAL.md` ("Lo que sigue").
 - `cargo run -p arena_client -- --op 3` arranca directo en una operación; `--libre`, en el mundo libre.
 
 1. **Jugador** (`18-ciclo-de-juego.js`, `21-gancho...js`): CharacterBody3D con correr, agacharse/deslizar, doble salto, dash (Q) y gancho (Ctrl/E). Valores: velocidad 7 (10 corriendo), salto 8.2, gravedad 24, gancho 55 m con tirón 58 y tope 34 m/s, dash 24 m/s 0,16 s cada 3 s.

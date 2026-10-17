@@ -291,6 +291,7 @@ dependencies = [
 name = "arena_client"
 version = "0.1.0"
 dependencies = [
+ "arena_net",
  "arena_sim",
  "bevy",
  "earcut",

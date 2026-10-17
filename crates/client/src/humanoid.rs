@@ -38,10 +38,12 @@ pub const SHOES: [u32; 4] = [0x1a1a1a, 0x5a3a28, 0xe8e8e8, 0x3a3a48];
 pub const HAIR: [u32; 6] = [0x1a1410, 0x4a3020, 0x8a6a40, 0xc8a060, 0xb0b0b0, 0x6a2a1a];
 /// Ropa de los soldados: chaleco, uniforme, detalles y arma.
 pub const ARMY: [u32; 8] = [0x2b3238, 0x3a4234, 0x4a4436, 0x1f2427, 0xd9792b, 0x15181a, 0x3e2422, 0x8a1c1c];
+/// Color de cada jugador online (chaleco y franja), para distinguirlos de los soldados.
+pub const TEAM: [u32; 4] = [0x2aa8d8, 0x7ad04a, 0xe0c040, 0xd85ad0];
 
 fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
     let mut pal = HashMap::new();
-    let all = SKIN.iter().chain(SHIRT.iter()).chain(PANTS.iter()).chain(SHOES.iter()).chain(HAIR.iter()).chain(ARMY.iter()).chain([0x808080u32, 0x6a5a48, 0x2a2a2a].iter());
+    let all = SKIN.iter().chain(SHIRT.iter()).chain(PANTS.iter()).chain(SHOES.iter()).chain(HAIR.iter()).chain(ARMY.iter()).chain(TEAM.iter()).chain([0x808080u32, 0x6a5a48, 0x2a2a2a].iter());
     for &c in all {
         let rough = if ARMY.contains(&c) { 0.6 } else { 0.85 };
         pal.entry(c).or_insert_with(|| mats.add(StandardMaterial { base_color: crate::world_render::col(c), perceptual_roughness: rough, ..default() }));

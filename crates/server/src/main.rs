@@ -50,10 +50,10 @@ fn main() {
             let ts = game.all_targets(None);
             let full: Vec<bool> = game.pawns.iter().map(|p| p.hp >= p.max_hp).collect();
             game.step_multi(&mut level, &ts, &full, TICK);
-            game.apply_pawn_hits(0);
             game.step_pawn_use(&mut level, TICK);
             game.step_objectives(&mut level, &nobody, TICK);
             game.step_campaign(&mut level, &nobody, TICK);
+            game.apply_pawn_hits(0);
         }
         host.collect(&game);
         game.events.clear();
@@ -78,7 +78,8 @@ fn main() {
         if report.elapsed() > Duration::from_secs(15) {
             report = Instant::now();
             let rtt: Vec<String> = host.rtt_ms().iter().map(|(i, r)| format!("J{i} {r:.0} ms")).collect();
-            println!("{} jugadores · {} · {}", host.player_count(), mode.label(), rtt.join(" · "));
+            let n = host.player_count();
+            println!("{n} {} · {} · {}", if n == 1 { "jugador" } else { "jugadores" }, mode.label(), rtt.join(" · "));
         }
         next += step;
         let now = Instant::now();

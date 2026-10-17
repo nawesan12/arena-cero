@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p arena_sim
+      - run: cargo test -p arena_sim -p arena_net
 
   build:
     name: Ejecutable (${{ matrix.name }})
@@ -26,10 +26,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: macos-arm64, os: macos-latest, bin: arena-cero }
-          - { name: macos-x64, os: macos-15-intel, bin: arena-cero }
-          - { name: windows-x64, os: windows-latest, bin: arena-cero.exe }
-          - { name: linux-x64, os: ubuntu-latest, bin: arena-cero }
+          - { name: macos-arm64, os: macos-latest, ext: '' }
+          - { name: macos-x64, os: macos-15-intel, ext: '' }
+          - { name: windows-x64, os: windows-latest, ext: .exe }
+          - { name: linux-x64, os: ubuntu-latest, ext: '' }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -40,8 +40,10 @@ jobs:
       - name: Dependencias de Linux
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
-      - run: cargo build -p arena_client --release
+      - run: cargo build -p arena_client -p arena_server --release
       - uses: actions/upload-artifact@v4
         with:
           name: arena-cero-${{ matrix.name }}
-          path: target/release/${{ matrix.bin }}
+          path: |
+            target/release/arena-cero${{ matrix.ext }}
+            target/release/arena-cero-servidor${{ matrix.ext }}

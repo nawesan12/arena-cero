@@ -255,24 +255,25 @@ fn step_player(
     mut fx: ResMut<Fx>,
     mut snd: ResMut<Sounds>,
     (mut perks, shop, torch, subway): (ResMut<PerkState>, Res<crate::shop::ShopOpen>, Res<crate::daynight::Flashlight>, Res<crate::subway::SubwayOpen>),
-    (menu, settings, mut hitstop, mut decals): (Res<crate::campaign_ui::MenuOpen>, Res<Settings>, ResMut<HitStop>, ResMut<crate::decals::Decals>),
+    (menu, settings, mut hitstop, mut decals, mut net): (Res<crate::campaign_ui::MenuOpen>, Res<Settings>, ResMut<HitStop>, ResMut<crate::decals::Decals>, ResMut<crate::online::Online>),
 ) {
-    if perks.active() || shop.0 || subway.0 || menu.0 {
-        return;
-    }
-    // pausa de verdad: con el mouse suelto (Esc, ventana sin foco) la partida no avanza
-    if settings.input && cursor.grab_mode == CursorGrabMode::None {
+    // online la partida nunca se pausa (los demás siguen jugando): con menús, quieto
+    let online = net.active();
+    let paused = perks.active() || shop.0 || subway.0 || menu.0 || (settings.input && cursor.grab_mode == CursorGrabMode::None);
+    if paused && !online {
         return;
     }
     // operación terminada: queda congelada detrás del resumen
-    if game.0.campaign.as_ref().is_some_and(|c| c.result.is_some()) {
+    if game.0.campaign.as_ref().is_some_and(|c| c.result.is_some()) && !online {
         return;
     }
     if hitstop.0 > 0.0 {
         hitstop.0 -= TICK;
-        return;
+        if !online {
+            return;
+        }
     }
-    let playing = cursor.grab_mode != CursorGrabMode::None;
+    let playing = !paused && cursor.grab_mode != CursorGrabMode::None;
     let axis = |pos: KeyCode, neg: KeyCode| if playing { f32::from(u8::from(key.pressed(pos))) - f32::from(u8::from(key.pressed(neg))) } else { 0.0 };
     let input = PlayerInput {
         forward: axis(KeyCode::KeyW, KeyCode::KeyS),
@@ -287,7 +288,7 @@ fn step_player(
         hook: std::mem::take(&mut latch.hook),
     };
     let winput = WeaponInput {
-        fire: playing && mouse.pressed(MouseButton::Left) && time.elapsed_secs_f64() - latch.grabbed_at > 0.25,
+        fire: playing && mouse.pressed(MouseButton::Left) && time.elapsed_secs_f64() - latch.grabbed_at > 0.25 && !net.down(),
         reload: std::mem::take(&mut latch.reload),
         select: latch.select.take(),
         cycle: std::mem::take(&mut latch.cycle),
@@ -296,6 +297,24 @@ fn step_player(
     let lp = &mut *lp;
     let level = &mut level.0;
     let GameRes(game, generation) = &mut *game;
+    let crate::online::Online { role, others, .. } = &mut *net;
+    let client = matches!(role, crate::online::Role::Client(_));
+    match role {
+        crate::online::Role::Client(r) => crate::online::client_pre(r, others, game, level, lp, &mut ui, &mut snd),
+        crate::online::Role::Host(h) => {
+            // los remotos: controles que llegaron, y se mueven y disparan antes que la IA
+            h.receive(game, level);
+            game.step_pawns(level, TICK);
+            for p in &game.pawns {
+                for w in &p.wfx {
+                    if let WeaponEvent::Fire { weapon, .. } = w {
+                        snd.play_at(S::Shot((*weapon).min(2) as u8), 0.3, p.state.eye());
+                    }
+                }
+            }
+        }
+        crate::online::Role::Off => {}
+    }
     lp.prev = lp.state.eye();
     let aim_before = lp.state.aim_t;
     let mut pev = std::mem::take(&mut lp.events);
@@ -351,13 +370,21 @@ fn step_player(
     let mut wev = Vec::new();
     let (arsenal, state, rng) = (&mut lp.arsenal, &mut lp.state, &mut lp.rng);
     let winput = if was_driving.is_some() { WeaponInput::default() } else { winput };
-    arsenal.step(&winput, state, &mut game.nades, rng, TICK, &mut wev);
+    let pulses = crate::online::Pulses { reload: winput.reload, nade: winput.nade, tag: latch.tag, fire: winput.fire, use_held: playing && key.pressed(KeyCode::KeyF), light: torch.0 };
+    // en el cliente las granadas y los impactos los resuelve el servidor (acá solo se ven y se oyen)
+    let mut own_nades = Vec::new();
+    arsenal.step(&winput, state, if client { &mut own_nades } else { &mut game.nades }, rng, TICK, &mut wev);
     let cam_rot = Quat::from_euler(EulerRot::YXZ, lp.state.yaw, lp.state.pitch, 0.0);
     let muzzle = lp.state.eye() + cam_rot * rig.muzzle_cam;
-    game.weapon_events(&wev, lp.arsenal.crit_mul, muzzle, lp.state.body(), level);
+    if !client {
+        game.weapon_events(&wev, lp.arsenal.crit_mul, muzzle, lp.state.body(), level);
+    }
     for e in wev {
         match e {
             WeaponEvent::Fire { weapon, .. } => {
+                if let crate::online::Role::Host(h) = role {
+                    h.shot(weapon as u8, muzzle);
+                }
                 // el destello dura casi todo el cuadro de disparo (en la web, hasta rate − 0,04)
                 rig.flash_t = (WEAPONS[weapon].rate - 0.04).min(0.06);
                 snd.play(S::Shot(weapon.min(2) as u8));
@@ -383,21 +410,43 @@ fn step_player(
     // partida
     let s = &lp.state;
     let target = Target { pos: s.pos, body: s.body(), vel: s.vel, feet: s.feet(), crouch_t: s.crouch_t, evasive: s.hook.is_some() || s.dash_t > 0.0, light: torch.0 };
-    if !crate::off("ai") {
-        game.step(level, &target, lp.hp >= lp.max_hp, TICK);
+    if let crate::online::Role::Client(r) = role {
+        // cliente: la partida la corre el servidor; se mandan los controles de este paso
+        crate::online::client_send(r, &input, &pulses, lp);
+        latch.tag = false;
+        latch.gadget = false;
+        latch.gadget_cycle = false;
+    } else {
+        if !crate::off("ai") {
+            if game.pawns.is_empty() {
+                game.step(level, &target, lp.hp >= lp.max_hp, TICK);
+            } else {
+                // anfitrión: la IA elige entre todos los jugadores
+                let ts = game.all_targets(Some(target));
+                let full: Vec<bool> = std::iter::once(lp.hp >= lp.max_hp).chain(game.pawns.iter().map(|p| p.hp >= p.max_hp)).collect();
+                game.step_multi(level, &ts, &full, TICK);
+                game.step_pawn_use(level, TICK);
+            }
+        }
+        let actor = Actor { pos: lp.state.pos, feet: lp.state.feet(), f_held: pulses.use_held };
+        game.step_objectives(level, &actor, TICK);
+        game.step_campaign(level, &actor, TICK);
+        if !game.pawns.is_empty() {
+            game.apply_pawn_hits(1);
+        }
+        if std::mem::take(&mut latch.tag) {
+            game.try_tag(level, lp.state.eye(), lp.state.look_dir());
+        }
+        if std::mem::take(&mut latch.gadget_cycle) {
+            game.gadget_sel = (game.gadget_sel + 1) % 3;
+            snd.play(S::Swap);
+        }
+        if std::mem::take(&mut latch.gadget) && game.driving.is_none() {
+            game.use_gadget(lp.state.eye(), lp.state.look_dir(), lp.state.vel);
+        }
     }
-    let actor = Actor { pos: lp.state.pos, feet: lp.state.feet(), f_held: playing && key.pressed(KeyCode::KeyF) };
-    game.step_objectives(level, &actor, TICK);
-    game.step_campaign(level, &actor, TICK);
-    if std::mem::take(&mut latch.tag) {
-        game.try_tag(level, lp.state.eye(), lp.state.look_dir());
-    }
-    if std::mem::take(&mut latch.gadget_cycle) {
-        game.gadget_sel = (game.gadget_sel + 1) % 3;
-        snd.play(S::Swap);
-    }
-    if std::mem::take(&mut latch.gadget) && game.driving.is_none() {
-        game.use_gadget(lp.state.eye(), lp.state.look_dir(), lp.state.vel);
+    if let crate::online::Role::Host(h) = role {
+        h.collect(game);
     }
     let beeps = game.nades.iter().filter(|n| !n.impact && n.beep > 0.3 - TICK && n.beep <= 0.3).count();
     if beeps > 0 {
@@ -531,7 +580,12 @@ fn step_player(
     if lp.last_hurt > 4.0 && lp.hp < lp.max_hp {
         lp.hp = (lp.hp + 4.0 * lp.regen_mul * TICK).min(lp.max_hp);
     }
-    if lp.hp <= 0.0 {
+    if let crate::online::Role::Host(h) = role {
+        h.send(game, level, Some(crate::online::host_self(lp)));
+        *others = crate::online::pawn_snaps(game);
+    }
+    // en el cliente la caída la decide el servidor
+    if lp.hp <= 0.0 && !client {
         if player_down(lp, game, level, &mut ui) {
             *generation += 1;
             perks.taken.clear();

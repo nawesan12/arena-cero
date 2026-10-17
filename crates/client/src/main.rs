@@ -25,6 +25,8 @@ mod hud;
 mod humanoid;
 mod markers;
 mod materials;
+mod online;
+mod players_view;
 mod people_view;
 mod perks;
 mod player;
@@ -53,6 +55,10 @@ struct Args {
     op: Option<usize>,
     /// `--libre`: mundo libre sin pasar por el menú.
     free: bool,
+    /// `--host`: abre la partida a otros jugadores al arrancar.
+    host: bool,
+    /// `--join ip:puerto`: se une a una partida al arrancar.
+    join: Option<std::net::SocketAddr>,
 }
 
 fn parse_args() -> Args {
@@ -79,6 +85,8 @@ fn parse_args() -> Args {
             "--shot" => a.shot = it.next(),
             "--op" => a.op = it.next().and_then(|w| w.parse::<usize>().ok()).map(|w| w.clamp(1, arena_sim::campaign::N_OPS) - 1),
             "--libre" => a.free = true,
+            "--host" => a.host = true,
+            "--join" => a.join = it.next().and_then(|s| s.parse().ok()),
             "--weapon" => a.weapon = it.next().and_then(|w| w.parse::<usize>().ok()).map(|w| w.clamp(1, 4) - 1),
             _ => eprintln!("opción desconocida: {k}"),
         }
@@ -104,6 +112,7 @@ fn main() {
         .insert_resource(args)
         .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin, render_scale::RenderScalePlugin, gun::GunPlugin, fx::FxPlugin, audio::AudioSynthPlugin, enemies_view::EnemiesViewPlugin, markers::MarkersPlugin, perks::PerksPlugin, tacmap::TacMapPlugin, hook_view::HookViewPlugin, vehicles_view::VehiclesViewPlugin))
         .add_plugins((daynight::DayNightPlugin, shop::ShopPlugin, extras_view::ExtrasViewPlugin, people_view::PeopleViewPlugin, subway::SubwayPlugin, campaign_ui::CampaignUiPlugin, decals::DecalsPlugin, feed_ui::FeedUiPlugin, arena_cycle::ArenaCyclePlugin, streets_ui::StreetsUiPlugin, humanoid::HumanoidPlugin, ambience::AmbiencePlugin))
+        .add_plugins((online::OnlinePlugin, players_view::PlayersViewPlugin))
         .add_systems(PreStartup, setup)
         .add_systems(Update, (world_render::follow_sky, world_render::animate_lava, auto_shot, bench))
         .run();

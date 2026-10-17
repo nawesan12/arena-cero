@@ -59,6 +59,22 @@ impl Game {
         self.trains = (0..n).map(|i| Train { t: (i as f32 * 17.0 + 4.0) % CYCLE, col: None }).collect();
     }
 
+    /// Cliente online: pone los trenes en el momento que dice el servidor (con su colisionador).
+    pub fn mirror_trains(&mut self, level: &mut Level, ts: &[f32]) {
+        let Some(c) = level.city.as_ref() else { return };
+        let tracks: Vec<Vec3> = c.stations.iter().map(|s| s.track).collect();
+        for (i, (tr, t)) in self.trains.iter_mut().zip(ts).enumerate() {
+            tr.t = *t;
+            if let Some(col) = tr.col.take() {
+                level.world.remove_collider(col);
+            }
+            if let Some(dx) = offset(tr.t) {
+                let p = tracks[i] + Vec3::X * dx;
+                tr.col = Some(level.world.add_collider(p.x, p.z, LEN, HEIGHT, WIDTH, p.y + 0.3));
+            }
+        }
+    }
+
     pub(crate) fn teardown_trains(&mut self, world: &mut crate::world::World) {
         for tr in &mut self.trains {
             if let Some(c) = tr.col.take() {

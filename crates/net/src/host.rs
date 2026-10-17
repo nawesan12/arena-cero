@@ -126,6 +126,20 @@ impl NetHost {
                 self.events.push(n);
             }
         }
+        for p in &game.pawns {
+            for w in &p.wfx {
+                if let arena_sim::weapons::WeaponEvent::Fire { weapon, .. } = w {
+                    self.events.push(NetEvent::Shot { id: p.id, weapon: *weapon as u8, at: p.state.eye() });
+                }
+            }
+        }
+    }
+
+    /// Disparo del jugador del anfitrión (para que lo oigan los demás).
+    pub fn shot(&mut self, weapon: u8, at: Vec3) {
+        if !self.clients.is_empty() {
+            self.events.push(NetEvent::Shot { id: 0, weapon, at });
+        }
     }
 
     /// Manda eventos (cada paso) y fotos (cada 3 pasos, 20 por segundo). `host` es el jugador del
@@ -146,7 +160,7 @@ impl NetHost {
             let ids: Vec<(ClientId, u8)> = self.clients.iter().map(|(c, i)| (*c, *i)).collect();
             for (cid, id) in ids {
                 let Some(p) = game.pawns.iter_mut().find(|p| p.id == id) else { continue };
-                let you = YouSnap { pos: p.state.pos, vel: p.state.vel, hp: p.hp, max_hp: p.max_hp, ammo: p.arsenal.ammo, weapon: p.arsenal.w as u8, nades: p.arsenal.nades, down: p.down, marks: std::mem::take(&mut p.marks) };
+                let you = YouSnap { pos: p.state.pos, vel: p.state.vel, hp: p.hp, max_hp: p.max_hp, ammo: p.arsenal.ammo, weapon: p.arsenal.w as u8, nades: p.arsenal.nades, down: p.down, marks: std::mem::take(&mut p.marks), ack: p.last_seq };
                 let at = p.state.pos;
                 let players: Vec<PlayerSnap> = others.iter().filter(|o| o.id != id).cloned().collect();
                 let snap = snapshot(game, level, at, self.tick, players, Some(you));

@@ -1,11 +1,13 @@
 # Arena Cero — Arquitectura
 
-Rust (estable ≥ 1.97) + Bevy 0.20. Unas 14.500 líneas en dos crates.
+Rust (estable ≥ 1.97) + Bevy 0.20. Cuatro crates.
 
 ```
 arena-cero/
 ├── crates/sim       arena_sim: la simulación, sin gráficos (solo glam)
 ├── crates/client    arena_client: el juego (Bevy), binario `arena-cero`
+├── crates/net       arena_net: online (protocolo, fotos del mundo, anfitrión, cliente, LAN)
+├── crates/server    servidor dedicado sin ventana, binario `arena-cero-servidor`
 ├── referencia-web/  la versión web original (Three.js r128): la especificación
 ├── docs/            esta documentación
 └── .github/         CI: tests + ejecutables para macOS, Windows y Linux
@@ -26,6 +28,24 @@ Flujo de un paso (en `client/player.rs → step_player`, `FixedUpdate`):
 4. `Game::step(level, target)`: enemigos, proyectiles, granadas, gadgets, peatones, director, autos IA.
 5. `Game::step_objectives`: interacción con F, cargas, antena, mejoras.
 6. Los `GameEvent` resultantes se traducen a sonido, partículas, carteles, daño al jugador, etc.
+
+## Online
+
+- **Autoridad**: la partida corre en el anfitrión (el juego con *Jugar online → Crear*) o en el servidor dedicado.
+  Los remotos son `Pawn` (`sim/pawn.rs`): el servidor los simula con los mismos `PlayerState::step` y
+  `Arsenal::step` a partir de un `PawnInput` (controles, con las pulsaciones como contadores para que un paquete
+  perdido no se coma un salto). `Game::all_targets` arma la lista de objetivos de la IA (anfitrión primero, si
+  juega) y `step_multi` la usa; `apply_pawn_hits` reparte golpes, arsenal forzado y granadas.
+- **Red** (`arena_net`, renet 2 + netcode sin cifrar sobre UDP, puerto 47800): canal confiable (saludo, lista de
+  jugadores, eventos traducidos a `NetEvent`, cambio de partida) y no confiable (controles a 60 Hz; fotos a 20 Hz).
+  La foto (`Snapshot`) lleva los enemigos y cosas a menos de 180 m, autos, peatones, trenes, estado de la ciudad y
+  de la campaña, los otros jugadores y lo propio (`YouSnap`: posición, vida, munición, último control procesado).
+  Se serializa con postcard y se comprime con lz4: unos 5 KB.
+- **Cliente** (`client/online.rs`): arma el mismo mapa con la misma semilla, copia cada foto en su `Game`
+  (`arena_net::apply` mueve también los colisionadores de autos y trenes) y deja que las vistas dibujen como
+  siempre. Predice su movimiento y lo corrige: compara la posición que el servidor dio para el último control
+  procesado con la que había predicho y corrige de a poco (si la diferencia pasa de 3 m, salta).
+- **LAN**: el anfitrión manda un anuncio por broadcast UDP al puerto 47801 cada segundo (`lan.rs`).
 
 ## `arena_sim`
 

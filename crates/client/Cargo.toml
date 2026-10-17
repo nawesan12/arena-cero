@@ -8,6 +8,7 @@ name = "arena-cero"
 path = "src/main.rs"
 
 [dependencies]
-arena_sim = { path = "../sim" }
+arena_sim = { path = "../sim", features = ["serde"] }
+arena_net = { path = "../net" }
 bevy = "0.20"
 earcut = "0.4"

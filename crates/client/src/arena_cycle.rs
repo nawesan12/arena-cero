@@ -37,9 +37,11 @@ fn cycle(
     // (oleada en la que se anunció, momento de la partida en que se cambia)
     mut pending: Local<Option<(u32, f32)>>,
     mut done_wave: Local<u32>,
+    net: Res<crate::online::Online>,
 ) {
     let g = &game.0;
-    if g.mode != Mode::Waves {
+    // online la arena no cambia (los demás tendrían que reconstruir todo a la vez)
+    if g.mode != Mode::Waves || net.active() {
         *pending = None;
         return;
     }

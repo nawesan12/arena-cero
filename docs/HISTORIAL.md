@@ -127,7 +127,25 @@ sombra (1.458 → 408 mallas con sombra), sin caras de abajo y árboles con dos 
 - **Campaña de 10 operaciones**: Nueve de Julio (cargas en el Obelisco) y El Coloso (jefe final); briefing con mapa
   antes de cada una; retratos en la radio.
 
+## Online cooperativo (17/10/2026)
+
+- **Jugadores remotos en la simulación** (`sim/pawn.rs`): moverse, armas, vida con regeneración, caer y reaparecer
+  (punto de control, refugio o inicio), F para derribos, objetivos y reabastecerse. La IA elige al jugador más
+  cercano; la campaña la cumple cualquiera (llegar, subir, usar, escapar).
+- **`crates/net`** (`arena_net`, renet 2 sobre UDP): protocolo, fotos del mundo comprimidas (postcard + lz4,
+  ~5 KB, 20 por segundo, con filtro por cercanía), eventos por canal confiable, anfitrión, cliente y anuncio en
+  la red local por broadcast.
+- **Servidor dedicado** (`crates/server`, `arena-cero-servidor`): sin ventana, 0,3 % de CPU y 9 MB; en campaña pasa
+  solo a la próxima operación.
+- **En el juego**: página *Jugar online* en el menú (nombre, crear partida de campaña, mundo libre u oleadas,
+  abrir la que estás jugando, unirse a las de la red local o por IP). El cliente predice su movimiento y lo corrige
+  con el servidor; los demás jugadores se ven con chaleco y casco de su color.
+- Pruebas: anfitrión y cliente por UDP en la misma máquina, y contra el servidor dedicado real.
+
 ## Lo que sigue
+
+- Online: probarlo con dos máquinas; manejar autos y subirse al subte siendo cliente; nombres sobre los
+  compañeros; oleadas que cambian de arena también online.
 
 - Probar la ciudad nueva jugando: rendimiento (hay muchas más piezas), lugares de la campaña y autos.
 - Ajustar el brillo, la campaña y las rachas jugando.

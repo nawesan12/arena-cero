@@ -39,7 +39,7 @@ fn anfitrion_y_cliente_por_udp() {
             if let Some(you) = &s.you {
                 start_pos.get_or_insert(you.pos);
             }
-            apply(&mut game_c, s);
+            apply(&mut game_c, &mut level_c, s);
         }
         let walking = client.you.is_some() && start.elapsed() > Duration::from_secs(1);
         client.send_input(PawnInput { forward: if walking { 1.0 } else { 0.0 }, ..Default::default() });
@@ -54,4 +54,35 @@ fn anfitrion_y_cliente_por_udp() {
     assert!(moved > 5.0, "caminó {moved} m");
     // el cliente ve a los enemigos de la oleada
     assert_eq!(game_c.wave, game.wave);
+}
+
+/// Contra un servidor dedicado de verdad (`ARENA_SERVER=127.0.0.1:47800 cargo test -p arena_net -- --ignored`).
+#[test]
+#[ignore]
+fn contra_el_servidor_dedicado() {
+    let Some(addr) = std::env::var("ARENA_SERVER").ok().and_then(|a| a.parse().ok()) else { return };
+    let mut client = NetClient::connect(addr, "Prueba").expect("conectar");
+    let start = Instant::now();
+    let mut first: Option<Vec3> = None;
+    let mut last = Vec3::ZERO;
+    let mut snaps = 0;
+    let mut enemies = 0;
+    let mut seq = 0;
+    while start.elapsed() < Duration::from_secs(5) {
+        client.receive();
+        if let Some(s) = client.snapshot.take() {
+            snaps += 1;
+            enemies = enemies.max(s.enemies.len());
+            if let Some(y) = s.you {
+                first.get_or_insert(y.pos);
+                last = y.pos;
+            }
+        }
+        seq += 1;
+        client.send_input(PawnInput { forward: 1.0, yaw: 1.0, seq, ..Default::default() });
+        std::thread::sleep(Duration::from_secs_f32(TICK));
+    }
+    eprintln!("jugador {:?} · modo {:?} · {snaps} fotos · hasta {enemies} enemigos · caminó {:.1} m · rtt {:.1} ms", client.you, client.mode, first.map_or(0.0, |f| f.distance(last)), client.rtt_ms());
+    assert!(client.you.is_some() && snaps > 50);
+    assert!(first.is_some_and(|f| f.distance(last) > 5.0));
 }

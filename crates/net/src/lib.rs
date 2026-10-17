@@ -122,6 +122,8 @@ pub struct YouSnap {
     pub nades: u32,
     pub down: f32,
     pub marks: Vec<Mark>,
+    /// Última secuencia de controles que el servidor aplicó (para corregir la predicción).
+    pub ack: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -197,8 +199,9 @@ pub enum NetEvent {
     Streak(u32),
     Unlock,
     WaveCleared,
-    Respawn { pos: Vec3, yaw: f32 },
     Victory { bonus: u32 },
+    /// Disparo de un jugador (para oírlo y ver el destello desde lejos).
+    Shot { id: u8, weapon: u8, at: Vec3 },
 }
 
 impl NetEvent {
@@ -219,9 +222,9 @@ impl NetEvent {
             GameEvent::Streak(n) => NetEvent::Streak(*n),
             GameEvent::Unlock => NetEvent::Unlock,
             GameEvent::WaveCleared => NetEvent::WaveCleared,
-            GameEvent::Respawn { pos, yaw } => NetEvent::Respawn { pos: *pos, yaw: *yaw },
             GameEvent::Victory { bonus } => NetEvent::Victory { bonus: *bonus },
-            // lo del jugador local del anfitrión (sacudidas, curar, botín, mejoras) no viaja
+            // lo del jugador local del anfitrión (sacudidas, curar, botín, mejoras, volver al punto
+            // de control) no viaja: cada remoto reaparece solo en el servidor
             _ => return None,
         })
     }
@@ -248,8 +251,8 @@ impl NetEvent {
             NetEvent::Streak(n) => GameEvent::Streak(*n),
             NetEvent::Unlock => GameEvent::Unlock,
             NetEvent::WaveCleared => GameEvent::WaveCleared,
-            NetEvent::Respawn { pos, yaw } => GameEvent::Respawn { pos: *pos, yaw: *yaw },
             NetEvent::Victory { bonus } => GameEvent::Victory { bonus: *bonus },
+            NetEvent::Shot { .. } => return None,
         })
     }
 }
@@ -298,6 +301,7 @@ pub fn snapshot(game: &Game, level: &Level, at: Vec3, tick: u32, players: Vec<Pl
     });
     let camp = game.campaign.as_ref().map(|c| CampSnap { step: c.step, t: c.t, objective: c.objective.clone(), marks: c.marks.clone(), limit_left: c.limit_left, progress: c.progress, deaths: c.deaths, checkpoint: c.checkpoint, result: c.result.clone() });
     let _ = level;
+    let _ = &near;
     Snapshot {
         tick,
         enemies,
@@ -313,7 +317,8 @@ pub fn snapshot(game: &Game, level: &Level, at: Vec3, tick: u32, players: Vec<Pl
             }
             v
         }).collect(),
-        people: game.people.iter().filter(|p| near(p.pos)).cloned().collect(),
+        // peatones: van todos (las vistas los sacan solas cuando se alejan)
+        people: game.people.clone(),
         trains: game.trains.iter().map(|t| t.t).collect(),
         loot: game.loot.iter().filter(|l| near(l.pos)).cloned().collect(),
         smokes: game.smokes.clone(),
@@ -335,22 +340,30 @@ pub fn snapshot(game: &Game, level: &Level, at: Vec3, tick: u32, players: Vec<Pl
     }
 }
 
-/// Copia la foto en el `Game` del cliente (lo que dibujan las vistas).
-pub fn apply(game: &mut Game, s: Snapshot) {
+/// Copia la foto en el `Game` del cliente (lo que dibujan las vistas) y mueve los colisionadores
+/// de autos y trenes a donde están en el servidor.
+pub fn apply(game: &mut Game, level: &mut Level, s: Snapshot) {
     game.enemies = s.enemies;
     game.corpses = s.corpses;
     game.shots = s.shots;
     game.nades = s.nades;
     game.orbs = s.orbs;
-    // los autos: se copian los datos pero se conservan los colisionadores locales (no los hay en el cliente)
+    // autos: los colisionadores son del mundo local; se sacan los viejos y se ponen donde corresponde
     for v in &mut game.vehicles {
-        v.col = None;
+        if let Some(c) = v.col.take() {
+            level.world.remove_collider(c);
+        }
     }
     game.vehicles = s.vehicles;
-    game.people = s.people;
-    for (t, v) in game.trains.iter_mut().zip(&s.trains) {
-        t.t = *v;
+    let driving = game.driving;
+    for (i, v) in game.vehicles.iter_mut().enumerate() {
+        v.col = None;
+        if !v.wrecked && driving != Some(i) {
+            v.place_collider(&mut level.world);
+        }
     }
+    game.people = s.people;
+    game.mirror_trains(level, &s.trains);
     game.loot = s.loot;
     game.smokes = s.smokes;
     game.decoys = s.decoys;
@@ -402,9 +415,13 @@ mod tests {
         assert!(b.len() < 40_000, "{} bytes", b.len());
         let back: ToClient = unpack(&b).unwrap();
         let ToClient::Snapshot(s) = back else { panic!() };
-        let mut g2 = Game::new(&mut build_level(MapId::Ciudad), 7);
+        let mut l2 = build_level(MapId::Ciudad);
+        let mut g2 = Game::new(&mut l2, 7);
         let n = s.enemies.len();
-        apply(&mut g2, *s);
+        apply(&mut g2, &mut l2, (*s).clone());
+        let cols = l2.world.colliders().count();
+        apply(&mut g2, &mut l2, *s);
+        assert_eq!(l2.world.colliders().count(), cols, "los colisionadores de autos y trenes se reemplazan, no se acumulan");
         assert_eq!(g2.enemies.len(), n);
     }
 

@@ -16,6 +16,23 @@ En la ciudad, al llegar a una esquina aparecen los **nombres de las calles**.
 | **Distrito Sur** (mundo libre) | menú, o `arena-cero --libre` | Mundo abierto de 590 m. Siete objetivos en el centro, cuatro barrios alrededor, misiones dinámicas, economía, vehículos, subte, día y noche. |
 | **Oleadas** | menú, o `arena-cero --map deposito` (también `fundicion`, `cantera`, `azotea`) | Arenas cerradas con oleadas de drones, jefe cada 5 oleadas y mejoras entre oleadas. Cada 3 oleadas se pasa a la próxima arena sin perder nada. |
 
+## Online (cooperativo hasta 4)
+
+Menú → **Jugar online**:
+- **Tu nombre**: se escribe ahí mismo y queda guardado.
+- **Crear**: campaña (la operación desbloqueada), mundo libre u oleadas; o **abrir esta partida** si ya estás jugando.
+  En la misma red los demás la ven sola; por internet, el anfitrión tiene que abrir el **puerto UDP 47800** en el
+  router y pasar su IP pública.
+- **Unirse**: las partidas de la red local aparecen en la lista; si no, **Unirse por IP** (se escribe y Enter).
+- Online la partida no se pausa: con el menú abierto te quedás quieto pero te pueden pegar.
+- Si caés, reaparecés a los 5 s en el punto de control (campaña), el refugio o el inicio. La campaña avanza con
+  lo que haga cualquiera; al terminar una operación, el anfitrión elige cómo sigue.
+- Por ahora siendo cliente no se manejan autos ni se usa el subte, y las oleadas online no cambian de arena.
+
+**Servidor dedicado**: `arena-cero-servidor [--modo campana N | libre | oleadas N] [--puerto 47800] [--nombre "…"]`.
+También aparece solo en la red local. En campaña pasa solo a la próxima operación.
+Desde la línea de comandos: `arena-cero --host` abre la partida al arrancar, `arena-cero --join ip:puerto` se une.
+
 ## Controles
 
 | Tecla | Acción |

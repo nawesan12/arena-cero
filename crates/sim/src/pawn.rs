@@ -37,6 +37,8 @@ pub struct PawnInput {
     pub reload_n: u8,
     pub nade_n: u8,
     pub tag_n: u8,
+    /// Número de secuencia (el servidor confirma el último que procesó).
+    pub seq: u32,
 }
 
 /// Un jugador remoto en la partida.
@@ -63,13 +65,15 @@ pub struct Pawn {
     pub kills: u32,
     /// Marcas de impacto de sus disparos (para su mira, no para la del anfitrión).
     pub marks: Vec<crate::game::Mark>,
+    /// Última secuencia de controles procesada.
+    pub last_seq: u32,
 }
 
 impl Pawn {
     pub fn new(id: u8, name: String, at: Vec3, city: bool) -> Self {
         let mut state = PlayerState::new(at.x, at.z);
         state.pos.y = at.y + EYE;
-        Self { id, name, state, arsenal: Arsenal::new(city), rng: Rng::new(100 + u32::from(id)), hp: 100.0, max_hp: 100.0, last_hurt: 10.0, down: 0.0, input: PawnInput::default(), last: PawnInput::default(), hold: 0.0, use_was: false, fx: Vec::new(), wfx: Vec::new(), kills: 0, marks: Vec::new() }
+        Self { id, name, state, arsenal: Arsenal::new(city), rng: Rng::new(100 + u32::from(id)), hp: 100.0, max_hp: 100.0, last_hurt: 10.0, down: 0.0, input: PawnInput::default(), last: PawnInput::default(), hold: 0.0, use_was: false, fx: Vec::new(), wfx: Vec::new(), kills: 0, marks: Vec::new(), last_seq: 0 }
     }
 
     /// Lo que la IA ve de este jugador.
@@ -151,6 +155,7 @@ impl Game {
                 continue;
             }
             let (inp, last) = (p.input, p.last);
+            p.last_seq = inp.seq;
             let pulse = |a: u8, b: u8| a != b;
             let mv = PlayerInput {
                 forward: inp.forward.clamp(-1.0, 1.0),
@@ -204,17 +209,32 @@ impl Game {
         }
     }
 
-    /// Aplica a los remotos los golpes de este paso. `offset` es el índice del primer remoto en la
-    /// lista de objetivos (1 si el anfitrión juega, 0 en el servidor dedicado).
+    /// Aplica a los remotos los golpes de este paso y lo que vale para todos (arsenal forzado,
+    /// granada por oleada). `offset` es el índice del primer remoto en la lista de objetivos
+    /// (1 si el anfitrión juega, 0 en el servidor dedicado). Va después de objetivos y campaña.
     pub fn apply_pawn_hits(&mut self, offset: usize) {
         for e in &self.events {
-            if let GameEvent::Hurt { dmg, to, .. } = e {
-                let k = *to as usize;
-                if k >= offset {
-                    if let Some(p) = self.pawns.get_mut(k - offset) {
-                        p.hurt(*dmg);
+            match e {
+                GameEvent::Hurt { dmg, to, .. } => {
+                    let k = *to as usize;
+                    if k >= offset {
+                        if let Some(p) = self.pawns.get_mut(k - offset) {
+                            p.hurt(*dmg);
+                        }
                     }
                 }
+                GameEvent::Unlock => {
+                    for p in &mut self.pawns {
+                        p.arsenal.unlocked = [true; 4];
+                        p.arsenal.refill();
+                    }
+                }
+                GameEvent::WaveCleared => {
+                    for p in &mut self.pawns {
+                        p.arsenal.nades = (p.arsenal.nades + 1).min(p.arsenal.max_nades);
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -288,6 +308,36 @@ mod tests {
             g.step_pawns(&mut l, crate::TICK);
         }
         assert!(g.pawns[0].alive() && g.pawns[0].hp >= 99.0);
+    }
+
+    #[test]
+    fn un_remoto_solo_avanza_la_campana() {
+        // servidor dedicado: nadie juega del lado del servidor, solo el remoto
+        let mut l = build_level(MapId::Ciudad);
+        let mut g = Game::new_campaign(&mut l, 0);
+        g.add_pawn(&l, 1, "Amigo".into());
+        let nobody = crate::objectives::Actor { pos: Vec3::splat(1e5), feet: 1e5, f_held: false };
+        let first = g.campaign.as_ref().unwrap().step;
+        for _ in 0..600 {
+            let mark = g.campaign.as_ref().unwrap().marks.first().copied();
+            if let Some(m) = mark {
+                let p = &mut g.pawns[0];
+                p.state.pos = Vec3::new(m.x, m.y.max(0.16) + EYE, m.z);
+                p.state.vel = Vec3::ZERO;
+            }
+            g.step_pawns(&mut l, crate::TICK);
+            let ts = g.all_targets(None);
+            g.step_multi(&mut l, &ts, &[true], crate::TICK);
+            g.step_pawn_use(&mut l, crate::TICK);
+            g.step_objectives(&mut l, &nobody, crate::TICK);
+            g.step_campaign(&mut l, &nobody, crate::TICK);
+            g.apply_pawn_hits(0);
+            g.events.clear();
+            if g.campaign.as_ref().unwrap().step > first {
+                break;
+            }
+        }
+        assert!(g.campaign.as_ref().unwrap().step > first, "el remoto cumplió el primer paso");
     }
 
     #[test]

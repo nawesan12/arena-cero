@@ -111,7 +111,7 @@ impl Vehicle {
     }
 
     /// Colisionador en caja alineada a los ejes que envuelve al auto girado.
-    fn place_collider(&mut self, world: &mut World) {
+    pub fn place_collider(&mut self, world: &mut World) {
         if let Some(c) = self.col.take() {
             world.remove_collider(c);
         }
