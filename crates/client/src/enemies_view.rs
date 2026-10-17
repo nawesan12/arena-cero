@@ -115,10 +115,6 @@ fn setup_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
 /// Piezas animadas de un enemigo.
 #[derive(Component, Default)]
 struct Rig {
-    body: Option<Entity>,
-    leg_l: Option<Entity>,
-    leg_r: Option<Entity>,
-    arms: Option<Entity>,
     visor: Option<Entity>,
     torso: Option<Entity>,
     ring: Option<Entity>,
@@ -129,6 +125,11 @@ struct Rig {
     spot: Option<Entity>,
     base_mat: Option<Handle<StandardMaterial>>,
     last_visor: u8,
+    /// Esqueleto (soldados).
+    skel: Option<crate::humanoid::Skel>,
+    /// Fase del paso y cuánto está apuntando (se suaviza).
+    walk: f32,
+    aim: f32,
 }
 
 #[derive(Component)]
@@ -160,52 +161,81 @@ impl B<'_, '_, '_> {
 }
 
 /// Soldado (`buildSoldierModel`): piernas, torso con placa naranja, casco con visor, brazos y arma.
-fn soldier(b: &mut B, root: Entity, kind: SoldierKind, rig: &mut Rig) {
+fn soldier(b: &mut B, ha: &crate::humanoid::HumanAssets, root: Entity, kind: SoldierKind, id: u32, rig: &mut Rig) {
+    use crate::humanoid::{ARMY, Outfit, build, hash};
     let l = b.l;
     let armor = l.mat(if kind == SoldierKind::Commander { "armorC" } else { "armor" });
     let (cloth, accent, gun) = (l.mat("cloth"), l.mat("accent"), l.mat("gun"));
-    let body = b.grp(root, 0.0, 0.0, 0.0);
-    let leg_l = b.grp(body, -0.13, 0.95, 0.0);
-    let leg_r = b.grp(body, 0.13, 0.95, 0.0);
-    for lg in [leg_l, leg_r] {
-        b.bx(lg, 0.2, 0.92, 0.24, 0.0, -0.46, 0.0, cloth.clone());
-        b.bx(lg, 0.22, 0.2, 0.3, 0.0, -0.86, 0.04, armor.clone());
-        b.bx(lg, 0.23, 0.14, 0.08, 0.0, -0.5, 0.13, armor.clone());
-    }
-    let torso = b.bx(body, 0.54, 0.62, 0.32, 0.0, 1.3, 0.0, armor.clone());
-    b.c.entity(torso).remove::<NotShadowCaster>();
-    b.bx(body, 0.4, 0.3, 0.06, 0.0, 1.36, 0.17, accent.clone());
-    b.bx(body, 0.42, 0.46, 0.2, 0.0, 1.32, -0.24, cloth.clone());
-    let head = b.grp(body, 0.0, 1.66, 0.0);
-    b.bx(head, 0.27, 0.29, 0.29, 0.0, 0.14, 0.0, cloth.clone());
-    b.bx(head, 0.32, 0.15, 0.34, 0.0, 0.3, -0.01, armor.clone());
-    let visor_mat = b.l.mat("flash");
-    let visor = b.bx(head, 0.25, 0.075, 0.03, 0.0, 0.16, 0.15, visor_mat);
-    b.bx(head, 0.33, 0.04, 0.35, 0.0, 0.24, -0.01, accent.clone());
-    for sx in [-1.0, 1.0] {
-        b.bx(body, 0.18, 0.12, 0.34, sx * 0.33, 1.56, 0.0, armor.clone());
-        b.bx(body, 0.19, 0.04, 0.35, sx * 0.33, 1.6, 0.0, accent.clone());
-    }
-    b.bx(body, 0.56, 0.08, 0.34, 0.0, 1.0, 0.0, gun.clone());
-    let arms = b.grp(body, 0.0, 1.45, 0.05);
-    b.bx(arms, 0.14, 0.14, 0.5, -0.2, -0.08, 0.2, armor.clone());
-    b.bx(arms, 0.14, 0.14, 0.5, 0.2, -0.08, 0.2, armor.clone());
-    let sniper = kind == SoldierKind::Sniper;
-    b.bx(arms, 0.08, 0.1, if sniper { 1.1 } else { 0.75 }, 0.05, -0.04, if sniper { 0.6 } else { 0.45 }, gun.clone());
-    if sniper {
-        b.bx(arms, 0.06, 0.06, 0.26, 0.05, 0.05, 0.3, gun.clone());
-    }
+    // variantes de uniforme por soldado: tono del pantalón, mochila, piel
+    let h = |k: u32, n: usize| hash(id, k) as usize % n;
+    let pants = ha.m([ARMY[1], ARMY[2], ARMY[3]][h(1, 3)]);
+    let skin = ha.m(crate::humanoid::SKIN[h(2, crate::humanoid::SKIN.len())]);
+    let o = match kind {
+        SoldierKind::Sniper => Outfit {
+            skin,
+            top: cloth.clone(),
+            bottom: pants,
+            shoes: ha.m(ARMY[5]),
+            hair: None,
+            long_hair: false,
+            helmet: None,
+            vest: Some((ha.m(ARMY[1]), accent.clone())),
+            pack: None,
+            hood: Some(ha.m(ARMY[2])),
+            cap: None,
+            coat: None,
+            skirt: false,
+            bag: None,
+            gun: Some((gun.clone(), 1.25, true)),
+            build: 1.0,
+        },
+        SoldierKind::Commander => Outfit {
+            skin,
+            top: armor.clone(),
+            bottom: cloth.clone(),
+            shoes: ha.m(ARMY[5]),
+            hair: Some(ha.m(crate::humanoid::HAIR[0])),
+            long_hair: false,
+            helmet: None,
+            vest: None,
+            pack: None,
+            hood: None,
+            cap: Some(ha.m(ARMY[7])),
+            coat: Some(armor.clone()),
+            skirt: false,
+            bag: None,
+            gun: Some((gun.clone(), 0.6, false)),
+            build: 1.12,
+        },
+        _ => Outfit {
+            skin,
+            top: cloth.clone(),
+            bottom: pants,
+            shoes: ha.m(ARMY[5]),
+            hair: None,
+            long_hair: false,
+            helmet: Some((armor.clone(), l.mat("flash"))),
+            vest: Some((armor.clone(), accent.clone())),
+            pack: if h(3, 2) == 0 { Some(ha.m(ARMY[2])) } else { None },
+            hood: None,
+            cap: None,
+            coat: None,
+            skirt: false,
+            bag: None,
+            gun: Some((gun.clone(), 0.8, false)),
+            build: 1.0 + h(4, 5) as f32 * 0.02,
+        },
+    };
+    let sk = build(b.c, ha, root, &o);
     if kind == SoldierKind::Commander {
-        b.bx(body, 1.0, 1.35, 0.09, -0.12, 1.0, 0.62, b.l.mat("shield"));
-        b.bx(body, 0.14, 0.5, 0.1, -0.12, 1.7, 0.62, accent);
+        // escudo en el brazo izquierdo
+        let shield = b.c.spawn((Mesh3d(l.cube.clone()), MeshMaterial3d(l.mat("shield")), Transform::from_xyz(-0.05, -0.25, 0.25).with_scale(Vec3::new(0.09, 1.2, 0.85)), NotShadowCaster)).id();
+        b.c.entity(sk.elbow[0]).add_child(shield);
     }
-    rig.body = Some(body);
-    rig.leg_l = Some(leg_l);
-    rig.leg_r = Some(leg_r);
-    rig.arms = Some(arms);
-    rig.visor = Some(visor);
-    rig.torso = Some(torso);
-    rig.base_mat = Some(armor);
+    rig.visor = sk.visor;
+    rig.torso = Some(sk.torso);
+    rig.base_mat = Some(o.top.clone());
+    rig.skel = Some(sk);
 }
 
 fn drone(b: &mut B, root: Entity, dk: DroneKind, surv: bool, rig: &mut Rig) {
@@ -251,12 +281,12 @@ fn turret(b: &mut B, root: Entity, rig: &mut Rig) {
     rig.base_mat = Some(m);
 }
 
-fn spawn_enemy(c: &mut Commands, l: &Look, e: &Enemy) -> Entity {
+fn spawn_enemy(c: &mut Commands, l: &Look, ha: &crate::humanoid::HumanAssets, e: &Enemy) -> Entity {
     let root = c.spawn((Transform::from_translation(e.pos).with_scale(Vec3::splat(e.scale)), Visibility::Hidden)).id();
     let mut rig = Rig { last_visor: 255, ..default() };
     let mut b = B { c, l };
     match e.kind {
-        Kind::Soldier(k) => soldier(&mut b, root, k, &mut rig),
+        Kind::Soldier(k) => soldier(&mut b, ha, root, k, e.id, &mut rig),
         Kind::Drone(d) => drone(&mut b, root, d, e.surv.is_some(), &mut rig),
         Kind::Turret => turret(&mut b, root, &mut rig),
     }
@@ -279,6 +309,7 @@ fn sync_enemies(
     game: Res<GameRes>,
     lp: Res<LocalPlayer>,
     look: Res<Look>,
+    ha: Res<crate::humanoid::HumanAssets>,
     mut roots: Query<(Entity, &mut Rig)>,
     mut tf: Query<&mut Transform>,
     mut mats: Query<&mut MeshMaterial3d<StandardMaterial>>,
@@ -306,7 +337,7 @@ fn sync_enemies(
     // nuevos
     for e in &g.enemies {
         if !known.contains_key(&e.id) {
-            let ent = spawn_enemy(&mut commands, &look, e);
+            let ent = spawn_enemy(&mut commands, &look, &ha, e);
             known.insert(e.id, ent);
         }
     }
@@ -410,18 +441,14 @@ fn sync_enemies(
                 }
             }
             Kind::Soldier(_) => {
-                let sw = if e.moving { (t * 9.0 + e.phase).sin() * 0.55 } else { 0.0 };
-                if let Some(x) = rig.leg_l.and_then(|x| tf.get_mut(x).ok()).as_mut() {
-                    x.rotation = Quat::from_rotation_x(sw - e.crouch * 1.2);
-                }
-                if let Some(x) = rig.leg_r.and_then(|x| tf.get_mut(x).ok()).as_mut() {
-                    x.rotation = Quat::from_rotation_x(-sw - e.crouch * 0.2);
-                }
-                if let Some(x) = rig.body.and_then(|x| tf.get_mut(x).ok()).as_mut() {
-                    x.translation.y = -e.crouch * 0.48;
-                }
-                if let Some(x) = rig.arms.and_then(|x| tf.get_mut(x).ok()).as_mut() {
-                    x.rotation = Quat::from_rotation_x(-e.pitch);
+                if let Some(sk) = rig.skel.clone() {
+                    let combat = e.st == Alert::Combat;
+                    let gait: f32 = if e.moving { if combat { 2.0 } else { 1.0 } } else { 0.0 };
+                    rig.walk += dt * if gait > 1.5 { 10.5 } else { 6.8 } * gait.min(1.0);
+                    let want = if combat { 1.0 } else { 0.0 };
+                    rig.aim += (want - rig.aim) * (dt * 5.0).min(1.0);
+                    let p = crate::humanoid::Pose { phase: rig.walk + e.phase, gait, crouch: e.crouch, aim: rig.aim, pitch: e.pitch, t: t + e.phase, hands_up: 0.0, dead: false, armed: true };
+                    crate::humanoid::pose(&sk, &p, &mut tf);
                 }
                 let vc = visor_code(e);
                 if vc != rig.last_visor {
@@ -459,7 +486,8 @@ fn sync_enemies(
 }
 
 /// Cadáveres: el mismo modelo de soldado, caído y con el visor apagado.
-fn sync_corpses(mut commands: Commands, game: Res<GameRes>, look: Res<Look>, mut q: Query<(Entity, &CorpseVis, &mut Transform)>, mut known: Local<HashMap<u32, Entity>>, mut seen_gen: Local<u32>) {
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn sync_corpses(mut commands: Commands, game: Res<GameRes>, look: Res<Look>, ha: Res<crate::humanoid::HumanAssets>, mut q: Query<(Entity, &CorpseVis, &mut Transform, Option<&CorpseSkel>)>, mut parts: Query<&mut Transform, Without<CorpseVis>>, mut known: Local<HashMap<u32, Entity>>, mut seen_gen: Local<u32>) {
     let g = &game.0;
     if *seen_gen != game.1 {
         *seen_gen = game.1;
@@ -474,9 +502,12 @@ fn sync_corpses(mut commands: Commands, game: Res<GameRes>, look: Res<Look>, mut
         let root = commands.spawn((Transform::from_translation(c.pos).with_rotation(Quat::from_rotation_y(c.yaw)), Visibility::default(), CorpseVis(c.id))).id();
         let mut rig = Rig::default();
         let mut b = B { c: &mut commands, l: &look };
-        soldier(&mut b, root, c.kind, &mut rig);
+        soldier(&mut b, &ha, root, c.kind, c.id, &mut rig);
         if let Some(v) = rig.visor {
             commands.entity(v).insert(MeshMaterial3d(look.mat("cloth")));
+        }
+        if let Some(sk) = rig.skel {
+            commands.entity(root).insert(CorpseSkel(sk));
         }
         if c.kind == SoldierKind::Commander {
             commands.entity(root).insert(Transform::from_translation(c.pos).with_rotation(Quat::from_rotation_y(c.yaw)).with_scale(Vec3::splat(1.18)));
@@ -491,13 +522,21 @@ fn sync_corpses(mut commands: Commands, game: Res<GameRes>, look: Res<Look>, mut
         }
         keep
     });
-    for (_, cv, mut t) in &mut q {
+    for (_, cv, mut t, sk) in &mut q {
         if let Some(c) = g.corpses.iter().find(|c| c.id == cv.0) {
             t.translation = c.pos;
             t.rotation = corpse_pose(c);
+            // brazos y piernas sueltos mientras cae (después ya no cambia)
+            if let Some(sk) = sk.filter(|_| c.t < 0.8) {
+                crate::humanoid::pose(&sk.0, &crate::humanoid::Pose { dead: true, ..Default::default() }, &mut parts);
+            }
         }
     }
 }
+
+/// Esqueleto de un cadáver.
+#[derive(Component)]
+struct CorpseSkel(crate::humanoid::Skel);
 
 /// Cómo cae cada uno: de espaldas hacia donde lo empujó la bala (rápido si fue crítico), se
 /// desploma de a poco si fue un derribo, o sale girando si lo agarró una explosión.

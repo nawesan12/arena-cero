@@ -19,6 +19,7 @@ mod gun;
 mod gunmodels;
 mod hook_view;
 mod hud;
+mod humanoid;
 mod markers;
 mod materials;
 mod people_view;
@@ -99,7 +100,7 @@ fn main() {
         .insert_resource(start_mode(&args))
         .insert_resource(args)
         .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin, render_scale::RenderScalePlugin, gun::GunPlugin, fx::FxPlugin, audio::AudioSynthPlugin, enemies_view::EnemiesViewPlugin, markers::MarkersPlugin, perks::PerksPlugin, tacmap::TacMapPlugin, hook_view::HookViewPlugin, vehicles_view::VehiclesViewPlugin))
-        .add_plugins((daynight::DayNightPlugin, shop::ShopPlugin, extras_view::ExtrasViewPlugin, people_view::PeopleViewPlugin, subway::SubwayPlugin, campaign_ui::CampaignUiPlugin, decals::DecalsPlugin, feed_ui::FeedUiPlugin, arena_cycle::ArenaCyclePlugin, streets_ui::StreetsUiPlugin))
+        .add_plugins((daynight::DayNightPlugin, shop::ShopPlugin, extras_view::ExtrasViewPlugin, people_view::PeopleViewPlugin, subway::SubwayPlugin, campaign_ui::CampaignUiPlugin, decals::DecalsPlugin, feed_ui::FeedUiPlugin, arena_cycle::ArenaCyclePlugin, streets_ui::StreetsUiPlugin, humanoid::HumanoidPlugin))
         .add_systems(PreStartup, setup)
         .add_systems(Update, (world_render::follow_sky, world_render::animate_lava, auto_shot, bench))
         .run();
