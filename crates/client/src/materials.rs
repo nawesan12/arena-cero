@@ -17,6 +17,8 @@ pub struct Look {
 #[derive(Resource)]
 pub struct Looks {
     map: HashMap<Mat, Look>,
+    /// Materiales de grupo en blanco: el color de cada variante va en los vértices.
+    groups: HashMap<Mat, Handle<StandardMaterial>>,
     pub foliage: Handle<StandardMaterial>,
     pub lava: Handle<StandardMaterial>,
     tex: Tex,
@@ -61,6 +63,31 @@ fn unlit(color: u32) -> StandardMaterial {
     StandardMaterial { base_color: c(color), unlit: true, ..default() }
 }
 
+/// Grupo de material: variantes que comparten textura y terminación y solo cambian de color.
+pub fn group(m: Mat) -> Mat {
+    match m {
+        Mat::Facade(i) => Mat::Facade(match i % 8 {
+            3 | 6 => 3,
+            1 | 5 => 1,
+            _ => 0,
+        }),
+        Mat::Front(i) => Mat::Front((i / 4).min(3) * 4),
+        Mat::Shop(_) => Mat::Shop(0),
+        Mat::Chapa(_) => Mat::Chapa(0),
+        Mat::Container(_) => Mat::Container(0),
+        Mat::Tower(_) => Mat::Tower(0),
+        Mat::Neon(_) | Mat::Strip | Mat::StripW | Mat::StripR | Mat::Lamp | Mat::Line | Mat::LineY | Mat::Screen | Mat::Red | Mat::Mint => Mat::StripW,
+        // lisos con luz: el color va en los vértices (se pierde algo de brillo metálico en lo chico)
+        Mat::Wall | Mat::Pillar | Mat::Steel | Mat::Tank | Mat::Yellow | Mat::Tire | Mat::Wood | Mat::Hedge | Mat::Trunk | Mat::Pole | Mat::Statue | Mat::Bollard | Mat::CarGlass | Mat::Car(_) | Mat::Awning(_) => Mat::Pole,
+        m => m,
+    }
+}
+
+/// ¿El material va por grupo (con color en los vértices)?
+pub fn grouped(m: Mat) -> bool {
+    group(m) != m || matches!(m, Mat::Facade(_) | Mat::Front(_) | Mat::Shop(_) | Mat::Chapa(_) | Mat::Awning(_) | Mat::Car(_) | Mat::Container(_) | Mat::Tower(_) | Mat::StripW | Mat::Pole)
+}
+
 const FACADE: [u32; 8] = [0xd8c3a5, 0xb7c2c6, 0xe0d2ad, 0xa99a8e, 0xc9b294, 0xcfd6d1, 0xc78f6f, 0x9fb0a6];
 const TOWER: [u32; 4] = [0xc3d2dc, 0xd9cdb5, 0xaab6c2, 0xe0e4e6];
 const CONTAINER: [u32; 4] = [0x8a4528, 0x2a5a63, 0x4a5662, 0x6e6a3a];
@@ -93,7 +120,7 @@ impl Looks {
         };
         let foliage = mats.add(lit(0x4d7d3a, 0.9, 0.0));
         let lava = mats.add(StandardMaterial { base_color_texture: Some(tex.lava.clone()), unlit: true, uv_transform: Affine2::from_scale(Vec2::splat(2.0)), ..default() });
-        Self { map: HashMap::new(), foliage, lava, tex }
+        Self { map: HashMap::new(), groups: HashMap::new(), foliage, lava, tex }
     }
 
     pub fn sky(&self, city: bool) -> Handle<Image> {
@@ -107,6 +134,33 @@ impl Looks {
             FloorTex::Asphalt => &self.tex.asphalt,
         };
         mats.add(StandardMaterial { uv_transform: Affine2::from_scale(Vec2::splat(a / 2.0)), ..tex(t, color, 0.92, 0.0) })
+    }
+
+    /// Material del grupo de `m` (blanco: el color de la variante viene en los vértices). Así las
+    /// 8 fachadas, los 16 frentes, los locales, la chapa, los autos, etc. se dibujan de una vez por zona
+    /// en vez de una vez por color.
+    pub fn get_group(&mut self, m: Mat, mats: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
+        let g = group(m);
+        if let Some(h) = self.groups.get(&g) {
+            return h.clone();
+        }
+        let (mut sm, _) = self.describe(g);
+        sm.base_color = Color::WHITE;
+        if g == Mat::Pole {
+            // terminación neutra para todo lo liso (madera, metal, plantas, autos)
+            sm.metallic = 0.15;
+            sm.perceptual_roughness = 0.7;
+        }
+        let h = mats.add(sm);
+        self.groups.insert(g, h.clone());
+        h
+    }
+
+    /// Color lineal de la variante (para los vértices) y UV en metros.
+    pub fn tint(&self, m: Mat) -> ([f32; 4], Option<f32>) {
+        let (sm, wuv) = self.describe(m);
+        let c = sm.base_color.to_linear();
+        ([c.red, c.green, c.blue, c.alpha], wuv)
     }
 
     pub fn get(&mut self, m: Mat, mats: &mut Assets<StandardMaterial>) -> &Look {

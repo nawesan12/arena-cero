@@ -45,16 +45,38 @@ struct MeshBuf {
     pos: Vec<[f32; 3]>,
     nor: Vec<[f32; 3]>,
     uv: Vec<[f32; 2]>,
+    col: Vec<[f32; 4]>,
     idx: Vec<u32>,
 }
 
+/// Lo chico (bancos, mesas, carteles, rejas, aires, motos...): se deja de dibujar lejos y no
+/// proyecta sombra. Las colisiones siguen igual.
+pub fn is_detail(vb: &VisualBox) -> bool {
+    let s = vb.size;
+    s.x.max(s.z) <= 3.3 && s.y <= 3.6 && !matches!(vb.mat, Mat::Sidewalk | Mat::Roof | Mat::Lamp | Mat::Water | Mat::Grass)
+}
+
+/// Distancia hasta la que se dibujan los detalles, según la calidad.
+pub fn detail_range(q: crate::quality::Quality) -> f32 {
+    match q {
+        crate::quality::Quality::Baja => 70.0,
+        crate::quality::Quality::Media => 100.0,
+        crate::quality::Quality::Alta => 140.0,
+    }
+}
+
+/// Mallas de detalles (para ajustar la distancia al cambiar la calidad).
+#[derive(Component)]
+pub struct DetailMesh;
+
 impl MeshBuf {
     fn push_box(&mut self, center: SVec3, size: SVec3, wuv: Option<f32>) {
-        self.push_box_rot(center, size, 0.0, wuv);
+        self.push_box_rot(center, size, 0.0, wuv, [1.0; 4], false);
     }
 
     /// Caja girada `yaw` sobre Y. La textura en metros se calcula sin girar (sigue a la caja).
-    fn push_box_rot(&mut self, center: SVec3, size: SVec3, yaw: f32, wuv: Option<f32>) {
+    /// `col` tiñe la textura; `no_bottom` saltea la cara de abajo (apoyada en el piso, no se ve).
+    fn push_box_rot(&mut self, center: SVec3, size: SVec3, yaw: f32, wuv: Option<f32>, col: [f32; 4], no_bottom: bool) {
         let rot = Quat::from_rotation_y(yaw);
         let h = size * 0.5;
         // (normal, u, v) con u × v = normal: los vértices quedan antihorarios vistos desde afuera
@@ -67,6 +89,9 @@ impl MeshBuf {
             ([0., -1., 0.], [1., 0., 0.], [0., 0., 1.]),
         ];
         for (n, u, v) in FACES {
+            if no_bottom && n[1] < -0.5 {
+                continue;
+            }
             let (n, u, v) = (SVec3::from(n), SVec3::from(u), SVec3::from(v));
             let base = self.pos.len() as u32;
             for (su, sv, tu, tv) in [(-1.0, -1.0, 0.0, 1.0), (1.0, -1.0, 1.0, 1.0), (1.0, 1.0, 1.0, 0.0), (-1.0, 1.0, 0.0, 0.0)] {
@@ -74,6 +99,7 @@ impl MeshBuf {
                 let world = center + rot * (p - center);
                 self.pos.push(world.to_array());
                 self.nor.push((rot * n).to_array());
+                self.col.push(col);
                 self.uv.push(match wuv {
                     // UV en metros: las fachadas repiten la textura por piso sin estirarse
                     Some(m) if n.x.abs() > 0.5 => [p.z / m, -p.y / m],
@@ -87,11 +113,16 @@ impl MeshBuf {
     }
 
     fn into_mesh(self) -> Mesh {
-        Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
+        let has_col = self.col.len() == self.pos.len() && !self.col.is_empty();
+        let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.pos)
             .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.nor)
             .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, self.uv)
-            .with_inserted_indices(Indices::U32(self.idx))
+            .with_inserted_indices(Indices::U32(self.idx));
+        if has_col {
+            m.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.col);
+        }
+        m
     }
 }
 
@@ -184,18 +215,32 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
     let info = &level.info;
     let a = info.a;
 
-    // cajas: una malla por (material, sombra, zona)
-    let mut batches: BTreeMap<(Mat, bool, i32, i32), MeshBuf> = BTreeMap::new();
+    // cajas: una malla por (grupo de material, sombra, detalle, zona). Las variantes de color de un
+    // mismo grupo van juntas con el color en los vértices; los detalles van aparte para cortarlos lejos.
+    let mut batches: BTreeMap<(Mat, bool, bool, i32, i32), MeshBuf> = BTreeMap::new();
     for vb in &w.visuals {
-        let key = (vb.mat, vb.shadow, (vb.center.x / CHUNK).floor() as i32, (vb.center.z / CHUNK).floor() as i32);
-        let wuv = looks.get(vb.mat, mats).wuv;
-        batches.entry(key).or_default().push_box_rot(vb.center, vb.size, vb.yaw, wuv);
+        let detail = is_detail(vb);
+        let (key_mat, col, wuv) = if crate::materials::grouped(vb.mat) {
+            let (c, wuv) = looks.tint(vb.mat);
+            (crate::materials::group(vb.mat), c, wuv)
+        } else {
+            (vb.mat, [1.0; 4], looks.get(vb.mat, mats).wuv)
+        };
+        // lo plano (veredas, canteros, cordones) no proyecta sombra que se note
+        let shadow = vb.shadow && !detail && vb.size.y > 0.35;
+        let key = (key_mat, shadow, detail, (vb.center.x / CHUNK).floor() as i32, (vb.center.z / CHUNK).floor() as i32);
+        let on_ground = vb.center.y - vb.size.y / 2.0 <= 0.17;
+        batches.entry(key).or_default().push_box_rot(vb.center, vb.size, vb.yaw, wuv, col, on_ground);
     }
-    for ((m, shadow, _, _), buf) in batches {
-        let look = looks.get(m, mats).mat.clone();
+    let range = detail_range(crate::quality::current());
+    for ((m, shadow, detail, _, _), buf) in batches {
+        let look = if crate::materials::grouped(m) { looks.get_group(m, mats) } else { looks.get(m, mats).mat.clone() };
         let mut e = commands.spawn((Mesh3d(meshes.add(buf.into_mesh())), MeshMaterial3d(look), Transform::IDENTITY, LevelEntity, Geometry));
         if !shadow {
             e.insert(NotShadowCaster);
+        }
+        if detail {
+            e.insert((DetailMesh, bevy::camera::visibility::VisibilityRange { start_margin: 0.0..0.0, end_margin: range..range + 10.0, use_aabb: true }));
         }
     }
 
@@ -237,26 +282,49 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
         ));
     }
 
-    // copas de árboles: fundidas en una malla por zona (cada entidad le cuesta CPU a Bevy)
+    // copas de árboles: fundidas en una malla por zona. Dos niveles de detalle: de cerca una icosfera
+    // facetada (240 vértices) con sombra; lejos una de 60 vértices sin sombra. Los del paisaje de
+    // fondo (afuera del mapa) van siempre en la simple.
     if !w.trees.is_empty() {
-        let mut ico = Sphere::new(1.0).mesh().ico(1).expect("icosfera");
-        ico.duplicate_vertices();
-        ico.compute_flat_normals();
-        let mut zones: BTreeMap<(i32, i32), Mesh> = BTreeMap::new();
+        let ico = |sub: u32| {
+            let mut m = Sphere::new(1.0).mesh().ico(sub).expect("icosfera");
+            m.duplicate_vertices();
+            m.compute_flat_normals();
+            m
+        };
+        let (hi, lo) = (ico(1), ico(0));
+        let near = 150.0;
+        // tipo: 0 detallada (adentro), 1 simple lejana (adentro), 2 simple siempre (paisaje)
+        let mut zones: BTreeMap<(i32, i32, u8), Mesh> = BTreeMap::new();
         for [x, y, z, s] in &w.trees {
-            let m = ico.clone().transformed_by(Transform::from_xyz(*x, *y, *z).with_scale(Vec3::new(*s, s * 0.9, *s)));
             let key = ((x / CHUNK).floor() as i32, (z / CHUNK).floor() as i32);
-            match zones.get_mut(&key) {
-                Some(acc) => {
-                    let _ = acc.merge(&m);
-                }
-                None => {
-                    zones.insert(key, m);
+            let inside = x.abs() < a && z.abs() < a;
+            let kinds: &[(u8, &Mesh)] = if inside { &[(0, &hi), (1, &lo)] } else { &[(2, &lo)] };
+            for (kind, base) in kinds {
+                let m = (*base).clone().transformed_by(Transform::from_xyz(*x, *y, *z).with_scale(Vec3::new(*s, s * 0.9, *s)));
+                match zones.get_mut(&(key.0, key.1, *kind)) {
+                    Some(acc) => {
+                        let _ = acc.merge(&m);
+                    }
+                    None => {
+                        zones.insert((key.0, key.1, *kind), m);
+                    }
                 }
             }
         }
-        for (_, m) in zones {
-            commands.spawn((Mesh3d(meshes.add(m)), MeshMaterial3d(looks.foliage.clone()), Transform::IDENTITY, LevelEntity, Geometry));
+        for ((_, _, kind), m) in zones {
+            let mut e = commands.spawn((Mesh3d(meshes.add(m)), MeshMaterial3d(looks.foliage.clone()), Transform::IDENTITY, LevelEntity, Geometry));
+            match kind {
+                0 => {
+                    e.insert(bevy::camera::visibility::VisibilityRange { start_margin: 0.0..0.0, end_margin: near..near + 10.0, use_aabb: true });
+                }
+                1 => {
+                    e.insert((NotShadowCaster, bevy::camera::visibility::VisibilityRange { start_margin: near..near + 10.0, end_margin: 100_000.0..100_001.0, use_aabb: true }));
+                }
+                _ => {
+                    e.insert(NotShadowCaster);
+                }
+            }
         }
     }
 
@@ -311,5 +379,30 @@ pub fn animate_lava(time: Res<Time>, looks: Res<Looks>, mut mats: ResMut<Assets<
     if let Some(mut m) = mats.get_mut(&looks.lava) {
         let t = time.elapsed_secs();
         m.uv_transform.translation = Vec2::new(t * 0.02, t * 0.012);
+    }
+}
+
+#[cfg(test)]
+mod costo {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    /// Cuánto le cuesta la ciudad a la placa: mallas (≈ llamadas de dibujo) y vértices, con el
+    /// agrupado viejo (una malla por color) y el nuevo (por grupo, detalles aparte, sin caras de abajo).
+    #[test]
+    fn costo_de_dibujo_de_la_ciudad() {
+        let l = arena_sim::build_level(arena_sim::MapId::Ciudad);
+        let w = &l.world;
+        let chunk = |v: &VisualBox| ((v.center.x / CHUNK).floor() as i32, (v.center.z / CHUNK).floor() as i32);
+        let old: BTreeSet<_> = w.visuals.iter().map(|v| (v.mat, v.shadow, chunk(v))).collect();
+        let new: BTreeSet<_> = w.visuals.iter().map(|v| (crate::materials::group(v.mat), v.shadow && !is_detail(v) && v.size.y > 0.35, is_detail(v), chunk(v))).collect();
+        let shadow_old = old.iter().filter(|k| k.1).count();
+        let shadow_new = new.iter().filter(|k| k.1).count();
+        let verts_old = w.visuals.len() * 24;
+        let verts_new: usize = w.visuals.iter().map(|v| if v.center.y - v.size.y / 2.0 <= 0.17 { 20 } else { 24 }).sum();
+        let detail_verts: usize = w.visuals.iter().filter(|v| is_detail(v)).map(|_| 24).sum();
+        eprintln!("mallas: {} → {} ({} con sombra → {})", old.len(), new.len(), shadow_old, shadow_new);
+        eprintln!("vértices: {} → {} (de los cuales {} son detalles que se cortan a la distancia)", verts_old, verts_new, detail_verts);
+        assert!(new.len() < old.len());
     }
 }

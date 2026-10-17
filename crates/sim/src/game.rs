@@ -1319,3 +1319,33 @@ impl Game {
         self.vehicles.iter().position(|v| (v.pos.x - pos.x).hypot(v.pos.z - pos.z) < 3.2 && (v.pos.y - (pos.y - 1.6)).abs() < 1.5)
     }
 }
+
+#[cfg(test)]
+mod costo {
+    use super::*;
+    use crate::maps::{MapId, build_level};
+
+    /// Cuánto tarda un paso de la partida en la ciudad (tiene que entrar holgado en 16 ms).
+    #[test]
+    fn costo_de_un_paso_en_la_ciudad() {
+        let mut l = build_level(MapId::Ciudad);
+        let mut g = Game::new(&mut l, 7);
+        let p = Vec3::new(30.0, 1.6, -30.0);
+        let t = Target { pos: p, body: p - Vec3::Y * 0.4, vel: Vec3::ZERO, feet: 0.16, crouch_t: 0.0, evasive: false, light: false };
+        for _ in 0..60 {
+            g.step(&mut l, &t, true, crate::TICK);
+        }
+        let n = 600;
+        let t0 = std::time::Instant::now();
+        for _ in 0..n {
+            g.step(&mut l, &t, true, crate::TICK);
+            g.events.clear();
+        }
+        let ms = t0.elapsed().as_secs_f64() * 1000.0 / n as f64;
+        eprintln!("paso de la partida: {ms:.3} ms ({} enemigos, {} personas, {} autos)", g.enemies.len(), g.people.len(), g.vehicles.len());
+        assert!(ms < 8.0);
+        let t0 = std::time::Instant::now();
+        let _ = build_level(MapId::Ciudad);
+        eprintln!("armar la ciudad: {:.0} ms", t0.elapsed().as_secs_f64() * 1000.0);
+    }
+}

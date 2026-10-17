@@ -85,6 +85,17 @@ Tests: 51, en cada módulo (`cargo test -p arena_sim`). Corren sin ventana.
 
 ## Decisiones de rendimiento
 
+- **Colores en los vértices**: las variantes de color de un mismo material (8 fachadas, 16 frentes, locales, chapa,
+  contenedores, torres) y todo lo liso (con o sin luz) comparten material; el color viaja en los vértices. La
+  ciudad pasó de 2.992 a 1.305 mallas (`cargo test -p arena_client costo -- --nocapture`).
+- **Detalles por distancia**: lo chico (bancos, mesas, carteles, rejas, aires, motos) va en mallas aparte con
+  `VisibilityRange` (70 / 100 / 140 m según la calidad) y sin sombra. Lo plano tampoco proyecta sombra:
+  de 1.458 mallas con sombra quedaron 408.
+- **Sin cara de abajo** en lo apoyado en el piso.
+- **Árboles con dos niveles**: copa facetada de 240 vértices con sombra hasta 150 m, después una de 60 sin sombra;
+  los del paisaje de fondo, siempre la simple.
+- La simulación tarda ~0,05 ms por paso en la ciudad (84 enemigos, 80 peatones, 73 autos) y armar la ciudad, 2 ms.
+
 Medido en el equipo de desarrollo (Intel i7-9750H + Radeon Pro 5300M):
 
 - **Sombras**: eran lo más caro (~7 ms). Bevy las recalcula cada cuadro (la web las calculaba una vez);

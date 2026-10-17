@@ -62,6 +62,11 @@ pub struct QualityRes {
     pub dirty: bool,
 }
 
+/// Calidad guardada (para lo que se arma antes de que corra el plugin).
+pub fn current() -> Quality {
+    load()
+}
+
 fn load() -> Quality {
     std::env::var("ARENA_Q").ok().or_else(|| crate::config::get("calidad")).and_then(|v| Quality::parse(&v)).unwrap_or(Quality::Media)
 }
@@ -117,13 +122,18 @@ fn switch_quality(key: Res<ButtonInput<KeyCode>>, mut q: ResMut<QualityRes>) {
     }
 }
 
-fn apply_quality(mut q: ResMut<QualityRes>, mut shadow: ResMut<DirectionalLightShadowMap>, mut cam: Query<(&mut Projection, &mut DistanceFog, &mut Msaa), With<MainCamera>>, mut gun_cam: Query<&mut Msaa, (With<crate::gun::GunCamera>, Without<MainCamera>)>, mut suns: Query<(&DirectionalLight, &mut CascadeShadowConfig)>) {
+#[allow(clippy::type_complexity)]
+fn apply_quality(mut details: Query<&mut bevy::camera::visibility::VisibilityRange, With<crate::world_render::DetailMesh>>, mut q: ResMut<QualityRes>, mut shadow: ResMut<DirectionalLightShadowMap>, mut cam: Query<(&mut Projection, &mut DistanceFog, &mut Msaa), With<MainCamera>>, mut gun_cam: Query<&mut Msaa, (With<crate::gun::GunCamera>, Without<MainCamera>)>, mut suns: Query<(&DirectionalLight, &mut CascadeShadowConfig)>) {
     if !q.dirty {
         return;
     }
     let Ok((mut proj, mut fog, mut msaa)) = cam.single_mut() else { return };
     let p = q.q.preset();
     shadow.size = p.shadow;
+    let range = crate::world_render::detail_range(q.q);
+    for mut v in &mut details {
+        v.end_margin = range..range + 10.0;
+    }
     if let Projection::Perspective(pp) = &mut *proj {
         pp.far = p.far;
     }
