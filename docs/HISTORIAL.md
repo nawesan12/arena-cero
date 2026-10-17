@@ -93,8 +93,26 @@ dinámicas, economía, tienda, gadgets, día y noche, Ciudad 2.0, subte, peatone
 - **Nombres de calles**: al acercarte a una esquina aparecen los carteles de las dos calles.
 - La radio de Vera tiene "voz": un pitido corto cada pocas letras mientras escribe.
 
+## Bordes naturales y Ciudad 3.0 (17/10/2026)
+
+- Bordes: río con costanera, baranda y muelles al norte y al este (si saltás, la corriente te devuelve a la
+  orilla); cerros de roca al oeste; bosque al sur; puente colgante, vuelta al mundo, faro, barcos e islas.
+- **Ciudad 3.0, trazado porteño desde cero** (`town.rs`): la grilla de 13 × 13 manzanas iguales de la web se
+  reemplazó por 9 × 9 manzanas de 40-50 m entre calles de 12 m, avenidas de 26 m con bulevar y la Av. 9 de Julio
+  (40 m) con el Obelisco; Diagonal Norte y Sur desde la Plaza Mayor; lotes entre medianeras con ochavas, pulmón de
+  manzana y pasajes; barrios con tipología propia (microcentro, torres del financiero, docks del Puerto, casas
+  con jardín, chapa de colores en El Cerro). Los puestos, campamentos, estaciones y la campaña se reubicaron.
+- **Detalles** (`props.rs`): veredas de 3 m con árboles, faroles, bancos, cestos, motos, bicicleteros, mesas de bar,
+  verdulerías; esquinas con semáforos, carteles de calle, sendas peatonales, bolardos y kioscos de diarios;
+  paradas con refugio y colectivos; toldos, carteles salientes y aires acondicionados; terrazas con parrilla,
+  tendedero y reposeras; patios; plazas y parque con calesita, juegos, glorieta, florería y food truck.
+- **Locales que se recorren**: bares, almacenes, pizzerías y farmacias con vidriera, puerta e interior.
+- Texturas nuevas: fachada clásica con persiana, moderna, ladrillo con arco, dock, local con vidriera, pasto.
+- Maqueta sin abrir el juego: `ARENA_DUMP=archivo cargo test -p arena_sim volcar_mapa` vuelca todas las piezas.
+
 ## Lo que sigue
 
+- Probar la ciudad nueva jugando: rendimiento (hay muchas más piezas), lugares de la campaña y autos.
 - Ajustar el brillo, la campaña y las rachas jugando.
 - Ragdoll de verdad.
 - Etapa online: servidor autoritativo (`arena_sim` headless), cuentas, ranking validado y cooperativo 2-4.

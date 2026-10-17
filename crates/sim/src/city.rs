@@ -755,6 +755,8 @@ impl B<'_> {
 pub fn build(w: &mut World) -> CityData {
     let mut b = B { w, r: Rng::new(SEED), spots: Vec::new() };
     let t = town::build(&mut b);
+    // los puestos con su propia semilla: no cambian aunque cambie el resto de la ciudad
+    b.r = Rng::new(SEED_OUTER);
     let mut outposts = b.outposts(&t.outpost_pos);
     for (k, &(cx, cz, name, gates)) in t.camps.iter().enumerate() {
         let op = b.camp(k, cx, cz, name, gates);
@@ -802,6 +804,24 @@ mod tests {
         // se reaparece corrido 1,5 m de la caja de reabastecimiento, sobre la vereda
         let g = l.world.ground_at(c.safe_pos.x + 1.5, c.safe_pos.z + 1.5, 1.0);
         assert!(g < 1.0, "piso del refugio {g}");
+    }
+
+    #[test]
+    fn hay_locales_que_se_recorren() {
+        use super::{FH, Vec3};
+        use crate::mat::Mat;
+        let l = crate::maps::build_level(crate::maps::MapId::Ciudad);
+        // pisos de local: baldosa a nivel de vereda, con aire libre arriba hasta el techo
+        let mut ok = 0;
+        for v in l.world.visuals.iter().filter(|v| v.mat == Mat::Tile && (v.center.y - 0.166).abs() < 0.01 && v.size.x > 4.0 && v.size.z > 4.0) {
+            let c = v.center;
+            let free = [0.6f32, 1.2, 2.0].iter().all(|h| l.world.box_at(Vec3::new(c.x, 0.16 + h, c.z + 0.3)).is_none() || l.world.box_at(Vec3::new(c.x + 0.8, 0.16 + h, c.z)).is_none());
+            let roof = l.world.box_at(Vec3::new(c.x, 0.16 + FH + 0.5, c.z)).is_some();
+            if free && roof {
+                ok += 1;
+            }
+        }
+        assert!(ok > 40, "locales recorribles: {ok}");
     }
 
     #[test]

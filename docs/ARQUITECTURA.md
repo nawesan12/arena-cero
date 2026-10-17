@@ -49,6 +49,9 @@ Flujo de un paso (en `client/player.rs → step_player`, `FixedUpdate`):
 | `people.rs` | Peatones y tránsito civil. |
 | `perks.rs` | Las 11 mejoras y la oferta de tres. |
 | `subway.rs` | Trenes del subte: ciclo por estación (llega, abre puertas, se va), colisionador, atropello, viaje. |
+| `town.rs` | Ciudad 3.0: calles (`XS`, `ZS`), manzanas, barrios, diagonales, lotes entre medianeras con ochavas, docks, torres, plazas, parque, refugio, Obelisco. |
+| `props.rs` | Detalles: mobiliario de vereda, esquinas, paradas, fachadas, terrazas, patios, plazas y locales con interior. |
+| `city_edge.rs` | Bordes naturales: río con costanera y muelles, cerros, bosque y paisaje de fondo. |
 | `campaign.rs` | Campaña: operaciones como datos (`OpDef` → `Step` con `Goal` y `Action`), puntos de control, rango. `Game::new_campaign(level, op)` arma la partida con `Setup::CAMPAIGN` (puestos dormidos, sin director). Tests con un bot que completa las 8 y que valida que los puntos no caigan en paredes. |
 
 Tests: 51, en cada módulo (`cargo test -p arena_sim`). Corren sin ventana.

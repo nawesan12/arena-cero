@@ -395,7 +395,13 @@ fn lot_building(b: &mut B, r: &mut Rng, x0: f32, z0: f32, x1: f32, z1: f32, face
         3 => Mat::Chapa(r.idx(6) as u8),
         _ => Mat::Facade([0u8, 2, 4, 7][r.idx(4)]),
     };
-    b.w.add_block(cx, base, cz, w, h, d, side_mat);
+    // algunos locales se pueden recorrer: la planta baja queda hueca con su interior
+    let walk_in = barrio != Barrio::Puerto && w >= 5.0 && d >= 7.0 && n >= 2 && r.next() < 0.2;
+    if walk_in {
+        b.w.add_block(cx, base + FH, cz, w, h - FH, d, side_mat);
+    } else {
+        b.w.add_block(cx, base, cz, w, h, d, side_mat);
+    }
     // techo
     b.w.add_visual(cx, base + h + 0.03, cz, w - 0.2, 0.06, d - 0.2, Mat::Roof, false);
     // fachada sobre la calle: piel con ventanas, planta baja aparte
@@ -414,8 +420,20 @@ fn lot_building(b: &mut B, r: &mut Rng, x0: f32, z0: f32, x1: f32, z1: f32, face
     if n > 1 {
         b.w.add_visual(fx, base + FH + (h - FH) / 2.0, fz, fw, h - FH, fd, front_mat, true);
     }
-    let pb = if barrio == Barrio::Jardin && r.next() < 0.6 { Mat::Front(r.idx(4) as u8) } else { Mat::Shop(r.idx(6) as u8) };
-    b.w.add_visual(fx, base + FH / 2.0, fz, fw, FH, fd, pb, true);
+    let pb = if walk_in { Mat::Shop(r.idx(6) as u8) } else if barrio == Barrio::Jardin && r.next() < 0.6 { Mat::Front(r.idx(4) as u8) } else { Mat::Shop(r.idx(6) as u8) };
+    if walk_in {
+        let out = match face {
+            'n' => Vec2::new(0.0, -1.0),
+            's' => Vec2::new(0.0, 1.0),
+            'w' => Vec2::new(-1.0, 0.0),
+            _ => Vec2::new(1.0, 0.0),
+        };
+        let sign = if let Mat::Shop(k) = pb { k } else { 0 };
+        let spot = super::props::shop_interior(b.w, r, x0, z0, x1, z1, out, sign);
+        b.spots.push(spot);
+    } else {
+        b.w.add_visual(fx, base + FH / 2.0, fz, fw, FH, fd, pb, true);
+    }
     // toldos, carteles, aires acondicionados y rejas
     let out_dir = match face {
         'n' => Vec2::new(0.0, -1.0),

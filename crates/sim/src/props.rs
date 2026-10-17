@@ -577,3 +577,95 @@ pub fn benches_ring(w: &mut World, x: f32, z: f32, r: f32) {
         bench(w, s, x + dx, z + dz);
     }
 }
+
+/* ---------- locales con interior ---------- */
+
+/// Planta baja que se puede recorrer: paredes, vidriera con puerta, piso y el interior según el
+/// rubro (bar, almacén, pizzería o farmacia). (x0, z0)-(x1, z1) es el lote; `out` mira a la calle.
+/// Devuelve dónde dejar una caja de botín.
+#[allow(clippy::too_many_arguments)]
+pub fn shop_interior(w: &mut World, r: &mut Rng, x0: f32, z0: f32, x1: f32, z1: f32, out: Vec2, sign: u8) -> Vec3 {
+    let h = FH - 0.05;
+    let t = 0.2;
+    let (cx, cz) = ((x0 + x1) / 2.0, (z0 + z1) / 2.0);
+    let along_x = out.y != 0.0;
+    // coordenadas locales: u a lo largo del frente, v de la vidriera (v = 0) hacia el fondo (v = dep)
+    let (len, dep) = if along_x { (x1 - x0, z1 - z0) } else { (z1 - z0, x1 - x0) };
+    let front = Vec2::new(cx, cz) + out * (dep / 2.0);
+    let inward = -out;
+    let uax = if along_x { Vec2::new(1.0, 0.0) } else { Vec2::new(0.0, 1.0) };
+    let at = |u: f32, v: f32| front + uax * u + inward * v;
+    let put = |w: &mut World, u: f32, v: f32, y0: f32, lu: f32, hh: f32, lv: f32, m: Mat, solid: bool| {
+        let p = at(u, v);
+        let (ww, dd) = if along_x { (lu, lv) } else { (lv, lu) };
+        if solid {
+            w.add_block(p.x, y0, p.y, ww, hh, dd, m);
+        } else {
+            w.add_visual(p.x, y0 + hh / 2.0, p.y, ww, hh, dd, m, false);
+        }
+    };
+    // piso, fondo y medianeras
+    put(w, 0.0, dep / 2.0, G + 0.005, len, 0.012, dep, Mat::Tile, false);
+    put(w, 0.0, dep - t / 2.0, G, len, h, t, Mat::Facade(2), true);
+    put(w, -len / 2.0 + t / 2.0, dep / 2.0, G, t, h, dep, Mat::Facade(2), true);
+    put(w, len / 2.0 - t / 2.0, dep / 2.0, G, t, h, dep, Mat::Facade(2), true);
+    // vidriera de vidrio con puerta (hueco de 1,4 m) y cartel encima
+    let door = -len / 2.0 + 1.2;
+    let glass0 = door + 0.7;
+    put(w, (glass0 + len / 2.0) / 2.0, t / 2.0, G, len / 2.0 - glass0, h - 0.7, 0.06, Mat::Glass, true);
+    put(w, (-len / 2.0 + door - 0.7) / 2.0, t / 2.0, G, (door - 0.7 + len / 2.0).max(0.1), h - 0.7, 0.06, Mat::Glass, true);
+    put(w, 0.0, 0.0, G + h - 0.7, len, 0.7, 0.12, Mat::Shop(sign), true);
+    // interior según el rubro
+    let kind = r.idx(4);
+    let inner = len - 2.0 * t;
+    match kind {
+        0 => {
+            // bar: barra al fondo con banquetas, botellas en la pared y mesas
+            put(w, 0.0, dep - 1.3, G, inner * 0.7, 1.05, 0.6, Mat::Wood, true);
+            put(w, 0.0, dep - 0.35, G + 1.3, inner * 0.8, 0.9, 0.3, Mat::Wood, false);
+            for k in 0..6 {
+                let u = -inner * 0.3 + k as f32 * inner * 0.12;
+                put(w, u, dep - 0.35, G + 1.9, 0.12, 0.3, 0.12, [Mat::Mint, Mat::Red, Mat::Yellow][k % 3], false);
+                put(w, u, dep - 2.0, G, 0.35, 0.75, 0.35, Mat::Pole, false);
+            }
+            for k in 0..2 {
+                put(w, -inner * 0.25 + k as f32 * inner * 0.5, dep * 0.35, G, 0.8, 0.78, 0.8, Mat::Wood, true);
+            }
+        }
+        1 => {
+            // almacén: góndolas, mostrador con caja y heladera
+            for k in 0..2 {
+                put(w, -inner * 0.15 + k as f32 * inner * 0.3, dep * 0.55, G, 0.6, 1.6, dep * 0.45, Mat::StripW, true);
+                for lvl in 0..3 {
+                    put(w, -inner * 0.15 + k as f32 * inner * 0.3, dep * 0.55, G + 0.4 + lvl as f32 * 0.45, 0.66, 0.2, dep * 0.4, [Mat::Red, Mat::Yellow, Mat::Awning(1)][lvl], false);
+                }
+            }
+            put(w, inner * 0.3, 1.2, G, 1.6, 1.0, 0.6, Mat::Wood, true);
+            put(w, inner * 0.3, 1.2, G + 1.15, 0.4, 0.3, 0.3, Mat::Steel, false);
+            put(w, -inner * 0.4, dep - 0.6, G, 1.0, 2.0, 0.8, Mat::StripW, true);
+            put(w, -inner * 0.4, dep - 1.02, G + 1.0, 0.9, 1.7, 0.04, Mat::Glass, false);
+        }
+        2 => {
+            // pizzería: horno de ladrillo, mostrador y mesas con manteles
+            put(w, -inner * 0.25, dep - 1.0, G, 1.8, 1.6, 1.4, Mat::Facade(3), true);
+            put(w, -inner * 0.25, dep - 0.3, G + 2.2, 0.5, 1.2, 0.5, Mat::Facade(3), false);
+            put(w, inner * 0.2, dep - 2.0, G, inner * 0.4, 1.0, 0.6, Mat::StripW, true);
+            for k in 0..2 {
+                put(w, -inner * 0.2 + k as f32 * inner * 0.4, dep * 0.35, G, 0.9, 0.78, 0.9, Mat::Red, true);
+            }
+        }
+        _ => {
+            // farmacia: estanterías blancas, mostrador y la cruz verde en la vidriera
+            put(w, 0.0, dep - 0.4, G, inner * 0.9, 2.2, 0.5, Mat::StripW, true);
+            put(w, 0.0, dep * 0.45, G, inner * 0.6, 1.0, 0.6, Mat::StripW, true);
+            put(w, len * 0.3, 0.2, G + h - 1.2, 0.5, 0.15, 0.05, Mat::Mint, false);
+            put(w, len * 0.3, 0.2, G + h - 1.2, 0.15, 0.5, 0.05, Mat::Mint, false);
+        }
+    }
+    // lámparas colgando del techo
+    for k in [-0.25f32, 0.25] {
+        put(w, inner * k, dep * 0.45, G + h - 0.35, 0.4, 0.15, 0.4, Mat::Lamp, false);
+    }
+    let p = at(inner * 0.3, dep * 0.7);
+    Vec3::new(p.x, G, p.y)
+}
