@@ -9,6 +9,8 @@ pub mod city2;
 pub mod city_edge;
 #[path = "town.rs"]
 pub mod town;
+#[path = "props.rs"]
+pub mod props;
 use crate::rng::Rng;
 use crate::world::{ColliderId, CylAxis, Cylinder, STEP, VisualBox, VisualGroup, World};
 use glam::Vec3;

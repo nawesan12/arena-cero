@@ -61,6 +61,9 @@ pub const ZS: [St; 10] = [
     St { c: 268.0, w: 12.0, name: "Calle Garay" },
 ];
 
+/// Ancho de vereda entre el cordón y las fachadas.
+pub const VEREDA: f32 = 3.0;
+
 /// Las dos diagonales: de las esquinas oeste de la Plaza Mayor a la 9 de Julio.
 pub const DIAG_W: f32 = 16.0;
 pub fn diagonals() -> [(Vec2, Vec2, &'static str); 2] {
@@ -182,7 +185,7 @@ fn seg_dist(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 }
 
 /// ¿Un rectángulo (centro, medio ancho, medio fondo) toca el corredor de alguna diagonal (más un margen)?
-fn near_diag(c: Vec2, hw: f32, hd: f32, margin: f32) -> bool {
+pub fn near_diag(c: Vec2, hw: f32, hd: f32, margin: f32) -> bool {
     let r = hw.hypot(hd);
     diagonals().iter().any(|(a, b, _)| seg_dist(c, *a, *b) < DIAG_W / 2.0 + margin + r * 0.75)
 }
@@ -240,12 +243,13 @@ pub(super) fn build(b: &mut B) -> Town {
                 }
             }
             if !matches!(u, Use::Plaza(_) | Use::Refugio | Use::Park) {
-                street_trees(b, &mut r, &blk);
+                super::props::sidewalks(b, &mut r, &blk);
             }
         }
     }
     diagonal_buildings(b, &mut r);
     obelisco(b);
+    super::props::intersections(b, &mut r);
     // estaciones en el orden de antes: Plaza Mayor primero (la campaña la usa)
     town.stations.sort_by_key(|s| if s.name == "Plaza Mayor" { 0 } else if s.name == "Refugio" { 1 } else { 2 });
     // autos estacionados a lo largo de las calles
@@ -329,6 +333,11 @@ fn streets(b: &mut B, r: &mut Rng, _town: &mut Town) {
         let mid = (a + c) / 2.0;
         let yaw = (-d.y).atan2(d.x);
         b.w.add_visual_rot(mid.x, 0.18, mid.y, len, 0.03, DIAG_W, yaw, Mat::Asphalt, false);
+        let nrm = Vec2::new(-d.y, d.x) / len;
+        for side in [-1.0f32, 1.0] {
+            let e = mid + nrm * side * (DIAG_W / 2.0 + 0.15);
+            b.w.add_visual_rot(e.x, 0.2, e.y, len, 0.06, 0.3, yaw, Mat::Jersey, false);
+        }
         let n = (len / 7.0) as i32;
         for k in 0..n {
             let p = a + d * ((k as f32 + 0.5) / n as f32);
@@ -337,56 +346,12 @@ fn streets(b: &mut B, r: &mut Rng, _town: &mut Town) {
     }
 }
 
-/// Vereda de la manzana: una losa, o en tiras de 4 m si la cruza una diagonal (para dejarle lugar).
+/// Vereda de la manzana: una losa. Donde la cruza una diagonal, el asfalto de la diagonal va
+/// encima (a la misma altura que la vereda), con cordones girados a los dos lados.
 fn sidewalk(b: &mut B, blk: &Block) {
     let c = blk.center();
     let (w, d) = (blk.x1 - blk.x0, blk.z1 - blk.z0);
-    if !near_diag(c, w / 2.0, d / 2.0, 0.0) {
-        b.w.add_box(c.x, c.y, w, 0.16, d, Mat::Sidewalk);
-        return;
-    }
-    let cell = 4.0;
-    let (nx, nz) = ((w / cell).ceil() as i32, (d / cell).ceil() as i32);
-    for ix in 0..nx {
-        for iz in 0..nz {
-            let x0 = blk.x0 + ix as f32 * cell;
-            let z0 = blk.z0 + iz as f32 * cell;
-            let (x1, z1) = ((x0 + cell).min(blk.x1), (z0 + cell).min(blk.z1));
-            let p = Vec2::new((x0 + x1) / 2.0, (z0 + z1) / 2.0);
-            if diagonals().iter().any(|(a, e, _)| seg_dist(p, *a, *e) < DIAG_W / 2.0 + 0.5) {
-                continue;
-            }
-            b.w.add_box(p.x, p.y, x1 - x0, 0.16, z1 - z0, Mat::Sidewalk);
-        }
-    }
-}
-
-/// Árboles y faroles sobre la vereda, a 1,5 m del cordón.
-fn street_trees(b: &mut B, r: &mut Rng, blk: &Block) {
-    let every = if blk.barrio == Barrio::Centro { 14.0 } else { 9.0 };
-    let inset = 1.4;
-    for side in 0..4 {
-        let (a0, a1, fixed, along_x) = match side {
-            0 => (blk.x0, blk.x1, blk.z0 + inset, true),
-            1 => (blk.x0, blk.x1, blk.z1 - inset, true),
-            2 => (blk.z0, blk.z1, blk.x0 + inset, false),
-            _ => (blk.z0, blk.z1, blk.x1 - inset, false),
-        };
-        let mut t = a0 + 5.0;
-        let mut k = 0;
-        while t < a1 - 5.0 {
-            let (x, z) = if along_x { (t, fixed) } else { (fixed, t) };
-            if !near_diag(Vec2::new(x, z), 0.5, 0.5, 2.0) && b.w.box_at(Vec3::new(x, 1.0, z)).is_none() {
-                if k % 3 == 1 {
-                    b.lamp(x, z);
-                } else if blk.barrio != Barrio::Financiero || r.next() < 0.4 {
-                    b.tree(x, z, 0.8 + r.f() * 0.4);
-                }
-            }
-            k += 1;
-            t += every * (0.8 + r.f() * 0.4);
-        }
-    }
+    b.w.add_box(c.x, c.y, w, 0.16, d, Mat::Sidewalk);
 }
 
 /* ---------- edificios entre medianeras ---------- */
@@ -451,6 +416,19 @@ fn lot_building(b: &mut B, r: &mut Rng, x0: f32, z0: f32, x1: f32, z1: f32, face
     }
     let pb = if barrio == Barrio::Jardin && r.next() < 0.6 { Mat::Front(r.idx(4) as u8) } else { Mat::Shop(r.idx(6) as u8) };
     b.w.add_visual(fx, base + FH / 2.0, fz, fw, FH, fd, pb, true);
+    // toldos, carteles, aires acondicionados y rejas
+    let out_dir = match face {
+        'n' => Vec2::new(0.0, -1.0),
+        's' => Vec2::new(0.0, 1.0),
+        'w' => Vec2::new(-1.0, 0.0),
+        _ => Vec2::new(1.0, 0.0),
+    };
+    let front_len = if matches!(face, 'n' | 's') { w } else { d };
+    let shop = matches!(pb, Mat::Shop(_));
+    super::props::facade_details(b.w, r, fx, fz, front_len, out_dir, n, shop);
+    if !shop && r.next() < 0.6 {
+        super::props::house_railing(b.w, fx, fz, front_len, out_dir);
+    }
     // cornisa y, a veces, balcones corridos
     let out = |dist: f32| match face {
         'n' => (0.0, -dist),
@@ -488,6 +466,7 @@ fn lot_building(b: &mut B, r: &mut Rng, x0: f32, z0: f32, x1: f32, z1: f32, face
     if r.next() < 0.3 {
         b.w.add_visual(cx + r.signed() * w * 0.3, top + 1.5, cz + r.signed() * d * 0.3, 0.06, 3.0, 0.06, Mat::Pole, false);
     }
+    super::props::rooftop(b.w, r, cx, cz, w - 1.0, d - 1.0, top);
     // parapeto
     for (px, pz, pw, pd) in [(cx, z0 + 0.1, w, 0.2), (cx, z1 - 0.1, w, 0.2), (x0 + 0.1, cz, 0.2, d), (x1 - 0.1, cz, 0.2, d)] {
         b.w.add_visual(px, top + 0.45, pz, pw, 0.9, pd, side_mat, false);
@@ -530,7 +509,7 @@ fn lots(b: &mut B, r: &mut Rng, blk: &Block) {
         _ => 13.5,
     };
     let setback = if barrio == Barrio::Jardin { 3.0 } else { 0.0 };
-    let (x0, z0, x1, z1) = (blk.x0 + 0.6, blk.z0 + 0.6, blk.x1 - 0.6, blk.z1 - 0.6);
+    let (x0, z0, x1, z1) = (blk.x0 + VEREDA, blk.z0 + VEREDA, blk.x1 - VEREDA, blk.z1 - VEREDA);
     let av = |side: usize| match side {
         0 => ZS[blk.j].avenue(),
         1 => ZS[blk.j + 1].avenue(),
@@ -610,6 +589,7 @@ fn lots(b: &mut B, r: &mut Rng, blk: &Block) {
             if r.next() < 0.6 {
                 b.w.add_box(c.x, c.y, ix1 - ix0 - 2.0, 1.8, 0.25, Mat::Facade(0));
             }
+            super::props::backyard(b.w, r, ix0, iz0, ix1, iz1, barrio);
         }
     }
 }
@@ -617,17 +597,17 @@ fn lots(b: &mut B, r: &mut Rng, blk: &Block) {
 /// Centro del frente de un lote en el lado `side` a la coordenada `t`.
 fn side_center(blk: &Block, side: usize, t: f32, depth: f32) -> (f32, f32) {
     match side {
-        0 => (t, blk.z0 + 0.6 + depth / 2.0),
-        1 => (t, blk.z1 - 0.6 - depth / 2.0),
-        2 => (blk.x0 + 0.6 + depth / 2.0, t),
-        _ => (blk.x1 - 0.6 - depth / 2.0, t),
+        0 => (t, blk.z0 + VEREDA + depth / 2.0),
+        1 => (t, blk.z1 - VEREDA - depth / 2.0),
+        2 => (blk.x0 + VEREDA + depth / 2.0, t),
+        _ => (blk.x1 - VEREDA - depth / 2.0, t),
     }
 }
 
 /// Un lote sobre el lado `side` entre `a` y `e` (coordenadas a lo largo del lado).
 #[allow(clippy::too_many_arguments)]
 fn lot_side(b: &mut B, r: &mut Rng, blk: &Block, side: usize, a: f32, e: f32, depth: f32, setback: f32, avenue: bool) {
-    let (x0, z0, x1, z1) = (blk.x0 + 0.6, blk.z0 + 0.6, blk.x1 - 0.6, blk.z1 - 0.6);
+    let (x0, z0, x1, z1) = (blk.x0 + VEREDA, blk.z0 + VEREDA, blk.x1 - VEREDA, blk.z1 - VEREDA);
     let gap = 0.05;
     let (lx0, lz0, lx1, lz1, face) = match side {
         0 => (a + gap, z0 + setback, e - gap, z0 + depth, 'n'),
@@ -637,6 +617,10 @@ fn lot_side(b: &mut B, r: &mut Rng, blk: &Block, side: usize, a: f32, e: f32, de
     };
     let c = Vec2::new((lx0 + lx1) / 2.0, (lz0 + lz1) / 2.0);
     if near_diag(c, (lx1 - lx0) / 2.0, (lz1 - lz0) / 2.0, 1.0) {
+        // lo que la diagonal deja libre se vuelve plazoleta (si no cae sobre el asfalto)
+        if !near_diag(c, 0.5, 0.5, 2.0) {
+            plazoleta(b, r, c, lx1 - lx0, lz1 - lz0);
+        }
         return;
     }
     let n = floors(r, blk.barrio, avenue);
@@ -672,6 +656,20 @@ fn lot_side(b: &mut B, r: &mut Rng, blk: &Block, side: usize, a: f32, e: f32, de
     lot_building(b, r, lx0, lz0, lx1, lz1, face, n, blk.barrio);
 }
 
+/// Plazoleta chica en un lote libre: pasto, un árbol, un banco y a veces una escultura.
+fn plazoleta(b: &mut B, r: &mut Rng, c: Vec2, w: f32, d: f32) {
+    b.w.add_visual(c.x, 0.18, c.y, w - 0.6, 0.03, d - 0.6, Mat::Grass, false);
+    b.tree(c.x + r.signed() * w * 0.2, c.y + r.signed() * d * 0.2, 1.0 + r.f() * 0.4);
+    if r.next() < 0.6 {
+        let s = if w > d { super::props::Side::N } else { super::props::Side::W };
+        super::props::bench(b.w, s, c.x + r.signed() * w * 0.15, c.y + r.signed() * d * 0.15);
+    }
+    if r.next() < 0.2 {
+        b.w.add_box(c.x, c.y, 1.4, 0.9, 1.4, Mat::Jersey);
+        b.w.add_block(c.x, 1.06, c.y, 0.7, 2.0, 0.7, Mat::Statue);
+    }
+}
+
 /// Edificios girados que acompañan las diagonales, de los dos lados.
 fn diagonal_buildings(b: &mut B, r: &mut Rng) {
     for (a, c, _) in diagonals() {
@@ -685,7 +683,7 @@ fn diagonal_buildings(b: &mut B, r: &mut Rng) {
             while t < len - 8.0 {
                 let f = 9.0 + r.f() * 5.0;
                 let depth = 13.0;
-                let p = a + dir * (t + f / 2.0) + nrm * side * (DIAG_W / 2.0 + 0.8 + depth / 2.0);
+                let p = a + dir * (t + f / 2.0) + nrm * side * (DIAG_W / 2.0 + VEREDA + depth / 2.0);
                 t += f;
                 // solo dentro de una manzana (no sobre calles ni plazas)
                 let inside = |q: Vec2| {
@@ -845,6 +843,13 @@ fn plaza(b: &mut B, r: &mut Rng, blk: &Block, name: &'static str) -> super::city
     for k in 0..3 {
         b.street_stall(c.x - half * 0.6 + k as f32 * 4.0, c.y - half + 2.5, (k + name.len()) as u32);
     }
+    super::props::benches_ring(b.w, c.x, c.y, 7.5);
+    super::props::flower_stand(b.w, c.x - half * 0.55, c.y + half * 0.75);
+    super::props::fountain_drink(b.w, c.x + half * 0.2, c.y - half * 0.85);
+    for k in 0..6 {
+        let a = k as f32 / 6.0 * std::f32::consts::TAU;
+        b.lamp(c.x + a.cos() * half * 0.85, c.y + a.sin() * half * 0.85);
+    }
     b.station(name, hole)
 }
 
@@ -864,6 +869,11 @@ fn park(b: &mut B, r: &mut Rng, blk: &Block) {
         b.w.add_block(gx + px, 0.4, gz + pz, 0.25, 3.0, 0.25, Mat::StripW);
     }
     b.w.add_block(gx, 3.4, gz, 6.6, 0.3, 6.6, Mat::Red);
+    super::props::playground(b.w, c.x + w * 0.22, c.y + d * 0.24);
+    super::props::carousel(b.w, c.x - w * 0.24, c.y - d * 0.22);
+    super::props::food_truck(b.w, c.x + w * 0.05, blk.z0 + 3.0);
+    super::props::benches_ring(b.w, c.x, c.y, 4.5);
+    super::props::fountain_drink(b.w, c.x + 3.0, c.y + 3.0);
     for _ in 0..((w * d) / 70.0) as i32 {
         let (x, z) = (blk.x0 + 2.0 + r.f() * (w - 4.0), blk.z0 + 2.0 + r.f() * (d - 4.0));
         if (x - c.x).abs() < 2.5 || (z - c.y).abs() < 2.5 || b.w.box_at(Vec3::new(x, 1.0, z)).is_some() {
@@ -894,8 +904,21 @@ fn refugio(b: &mut B, r: &mut Rng, blk: &Block) -> (super::city2::Station, Vec3)
     let safe = Vec3::new(bx - 3.0, 1.0, bz + 2.0);
     b.w.add_block(bx - 3.0, 0.16, bz + 2.6, 1.6, 0.9, 0.9, Mat::Container(1));
     b.w.add_strip(bx - 3.0, 1.1, bz + 2.6, 1.2, 0.06, 0.7, Mat::Mint);
-    for (x, z) in [(-14.0, 10.0), (12.0, -12.0), (-14.0, -14.0)] {
+    for (x, z) in [(-14.0, 10.0), (12.0, -12.0), (-14.0, -14.0), (14.0, 10.0), (-2.0, 14.0), (-16.0, 2.0)] {
         b.tree(c.x + x, c.y + z, 1.1 + r.f() * 0.3);
+    }
+    // jardín de la casona, bancos, bebedero, farolas y una huerta comunitaria
+    b.w.add_visual(c.x - 4.0, 0.18, c.y + 4.5, 14.0, 0.03, 6.0, Mat::Grass, false);
+    for k in 0..4 {
+        b.w.add_box(c.x - 9.0 + k as f32 * 3.2, c.y + 5.0, 2.2, 0.4, 3.6, Mat::Wood);
+        b.w.add_visual(c.x - 9.0 + k as f32 * 3.2, 0.62, c.y + 5.0, 2.0, 0.08, 3.4, Mat::Hedge, false);
+    }
+    super::props::benches_ring(b.w, c.x + 9.0, c.y + 8.0, 3.2);
+    super::props::fountain_drink(b.w, c.x + 9.0, c.y + 8.0);
+    super::props::food_truck(b.w, c.x + 8.0, c.y - 14.0);
+    for k in 0..4 {
+        let a = k as f32 / 4.0 * std::f32::consts::TAU + 0.4;
+        b.lamp(c.x + a.cos() * half * 0.8, c.y + a.sin() * half * 0.8);
     }
     (b.station("Refugio", hole), safe)
 }
