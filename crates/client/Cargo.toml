@@ -1,0 +1,12 @@
+[package]
+name = "arena_client"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "arena-cero"
+path = "src/main.rs"
+
+[dependencies]
+arena_sim = { path = "../sim" }
+bevy = "0.20"

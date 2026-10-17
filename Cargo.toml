@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = ["crates/sim", "crates/client"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "UNLICENSED"
+
+[workspace.dependencies]
+glam = "0.33"
+
+# Compilación rápida en desarrollo: el código propio sin optimizar, las dependencias optimizadas.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

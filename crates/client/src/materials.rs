@@ -1,0 +1,155 @@
+//! Cómo se ve cada `Mat`: color, textura, rugosidad y si la textura va en metros (world UV).
+//! Valores de `03-mapas.js` y `03b-ciudad.js`.
+
+use crate::textures;
+use arena_sim::Mat;
+use arena_sim::maps::FloorTex;
+use bevy::math::Affine2;
+use bevy::prelude::*;
+use std::collections::HashMap;
+
+pub struct Look {
+    pub mat: Handle<StandardMaterial>,
+    /// Metros que ocupa una repetición de la textura (None: UV 0..1 por cara).
+    pub wuv: Option<f32>,
+}
+
+#[derive(Resource)]
+pub struct Looks {
+    map: HashMap<Mat, Look>,
+    pub foliage: Handle<StandardMaterial>,
+    pub lava: Handle<StandardMaterial>,
+    tex: Tex,
+}
+
+struct Tex {
+    floor: Handle<Image>,
+    crate_: Handle<Image>,
+    concrete: Handle<Image>,
+    corr: Handle<Image>,
+    lava: Handle<Image>,
+    windows: Handle<Image>,
+    sand: Handle<Image>,
+    rock: Handle<Image>,
+    asphalt: Handle<Image>,
+    tile: Handle<Image>,
+    plaster: Handle<Image>,
+    glass: Handle<Image>,
+    pub sky_city: Handle<Image>,
+    pub sky_desert: Handle<Image>,
+}
+
+fn c(h: u32) -> Color {
+    Color::srgb_u8((h >> 16) as u8, (h >> 8) as u8, h as u8)
+}
+
+fn lit(color: u32, rough: f32, metal: f32) -> StandardMaterial {
+    StandardMaterial { base_color: c(color), perceptual_roughness: rough, metallic: metal, ..default() }
+}
+
+fn tex(t: &Handle<Image>, color: u32, rough: f32, metal: f32) -> StandardMaterial {
+    StandardMaterial { base_color_texture: Some(t.clone()), ..lit(color, rough, metal) }
+}
+
+fn unlit(color: u32) -> StandardMaterial {
+    StandardMaterial { base_color: c(color), unlit: true, ..default() }
+}
+
+const FACADE: [u32; 8] = [0xd8c3a5, 0xb7c2c6, 0xe0d2ad, 0xa99a8e, 0xc9b294, 0xcfd6d1, 0xc78f6f, 0x9fb0a6];
+const TOWER: [u32; 4] = [0xc3d2dc, 0xd9cdb5, 0xaab6c2, 0xe0e4e6];
+const CONTAINER: [u32; 4] = [0x8a4528, 0x2a5a63, 0x4a5662, 0x6e6a3a];
+const CAR: [u32; 6] = [0xb83a30, 0x2f5f8f, 0xd8d4c8, 0x2d2f31, 0x6f7f4a, 0xd9a43a];
+const AWNING: [u32; 4] = [0xc0392b, 0x2e86ab, 0xe0a92a, 0x3f8f5a];
+
+impl Looks {
+    pub fn new(images: &mut Assets<Image>, mats: &mut Assets<StandardMaterial>) -> Self {
+        let tex = Tex {
+            floor: images.add(textures::floor()),
+            crate_: images.add(textures::crate_()),
+            concrete: images.add(textures::concrete()),
+            corr: images.add(textures::corrugated()),
+            lava: images.add(textures::lava()),
+            windows: images.add(textures::windows()),
+            sand: images.add(textures::sand()),
+            rock: images.add(textures::rock()),
+            asphalt: images.add(textures::asphalt()),
+            tile: images.add(textures::tile()),
+            plaster: images.add(textures::plaster()),
+            glass: images.add(textures::glass()),
+            sky_city: images.add(textures::sky(true)),
+            sky_desert: images.add(textures::sky(false)),
+        };
+        let foliage = mats.add(lit(0x4d7d3a, 0.9, 0.0));
+        let lava = mats.add(StandardMaterial { base_color_texture: Some(tex.lava.clone()), unlit: true, uv_transform: Affine2::from_scale(Vec2::splat(2.0)), ..default() });
+        Self { map: HashMap::new(), foliage, lava, tex }
+    }
+
+    pub fn sky(&self, city: bool) -> Handle<Image> {
+        if city { self.tex.sky_city.clone() } else { self.tex.sky_desert.clone() }
+    }
+
+    pub fn floor(&self, kind: FloorTex, color: u32, a: f32, mats: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
+        let t = match kind {
+            FloorTex::Tiles => &self.tex.floor,
+            FloorTex::Sand => &self.tex.sand,
+            FloorTex::Asphalt => &self.tex.asphalt,
+        };
+        mats.add(StandardMaterial { uv_transform: Affine2::from_scale(Vec2::splat(a / 2.0)), ..tex(t, color, 0.92, 0.0) })
+    }
+
+    pub fn get(&mut self, m: Mat, mats: &mut Assets<StandardMaterial>) -> &Look {
+        if !self.map.contains_key(&m) {
+            let (sm, wuv) = self.describe(m);
+            let look = Look { mat: if m == Mat::Lava { self.lava.clone() } else { mats.add(sm) }, wuv };
+            self.map.insert(m, look);
+        }
+        &self.map[&m]
+    }
+
+    fn describe(&self, m: Mat) -> (StandardMaterial, Option<f32>) {
+        let t = &self.tex;
+        match m {
+            Mat::Wall => (lit(0x20272b, 0.85, 0.0), None),
+            Mat::Pillar => (lit(0x2a3236, 0.7, 0.2), None),
+            Mat::Crate => (tex(&t.crate_, 0xffffff, 0.8, 0.0), None),
+            Mat::Concrete => (tex(&t.concrete, 0xffffff, 0.9, 0.0), None),
+            Mat::Container(i) => (tex(&t.corr, CONTAINER[i as usize % 4], 0.6, 0.35), None),
+            Mat::Strip => (unlit(0xffb02e), None),
+            Mat::StripW => (unlit(0xdfe8e4), None),
+            Mat::StripR => (unlit(0xff3d5a), None),
+            Mat::Lava => (StandardMaterial::default(), None),
+            Mat::Steel => (lit(0x3b4248, 0.4, 0.7), None),
+            Mat::Tank => (lit(0x55606a, 0.5, 0.5), None),
+            Mat::Rock => (tex(&t.rock, 0xffffff, 0.95, 0.0), None),
+            Mat::Yellow => (lit(0xe0a92a, 0.55, 0.3), None),
+            Mat::Tire => (lit(0x1a1a1a, 0.9, 0.0), None),
+            Mat::Water => (StandardMaterial { alpha_mode: AlphaMode::Blend, base_color: c(0x3f8fae).with_alpha(0.85), ..lit(0x3f8fae, 0.1, 0.3) }, None),
+            Mat::Wood => (lit(0x8a6440, 0.85, 0.0), None),
+            Mat::Glass => (StandardMaterial { alpha_mode: AlphaMode::Blend, base_color: c(0x9fe9ff).with_alpha(0.16), ..lit(0x9fe9ff, 0.0, 1.0) }, None),
+            Mat::Windows(r) => {
+                let r = f32::from(r) + 1.0;
+                (StandardMaterial { base_color_texture: Some(t.windows.clone()), unlit: true, uv_transform: Affine2::from_scale(Vec2::new(r, r * 2.0)), ..default() }, None)
+            }
+            Mat::Sidewalk => (tex(&t.tile, 0xffffff, 0.92, 0.0), Some(2.4)),
+            Mat::InFloor => (tex(&t.tile, 0xa8a092, 0.8, 0.0), Some(1.6)),
+            Mat::Roof => (tex(&t.concrete, 0xb9b9b9, 0.95, 0.0), Some(4.0)),
+            Mat::Facade(i) => (tex(&t.plaster, FACADE[i as usize % 8], 0.88, 0.0), Some(3.0)),
+            Mat::Tower(i) => (tex(&t.glass, TOWER[i as usize % 4], 0.3, 0.45), Some(3.4)),
+            Mat::Sandbag => (tex(&t.plaster, 0x9a8660, 1.0, 0.0), Some(0.9)),
+            Mat::Jersey => (tex(&t.concrete, 0xd6d2c8, 0.9, 0.0), Some(2.0)),
+            Mat::Hedge => (lit(0x3f6a32, 1.0, 0.0), None),
+            Mat::Trunk => (lit(0x5a4130, 1.0, 0.0), None),
+            Mat::Pole => (lit(0x2c3236, 0.5, 0.6), None),
+            Mat::Lamp => (unlit(0xfff2d0), None),
+            Mat::Line => (unlit(0xe8e4d4), None),
+            Mat::LineY => (unlit(0xe0b23a), None),
+            Mat::Car(i) => (lit(CAR[i as usize % 6], 0.4, 0.5), None),
+            Mat::CarGlass => (lit(0x1d2a33, 0.15, 0.8), None),
+            Mat::Screen => (unlit(0x5fd8ff), None),
+            Mat::Red => (unlit(0xff3d5a), None),
+            Mat::Mint => (unlit(0x5dffb0), None),
+            Mat::Awning(i) => (lit(AWNING[i as usize % 4], 0.8, 0.0), None),
+            Mat::Statue => (lit(0x7a8a80, 0.45, 0.6), None),
+        }
+    }
+}
