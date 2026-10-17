@@ -58,6 +58,67 @@ enum Page {
     Main,
     Ops,
     Waves,
+    Options,
+}
+
+/// Lo que se puede ajustar en la página de opciones.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Opts<'w> {
+    settings: ResMut<'w, crate::player::Settings>,
+    music: ResMut<'w, crate::audio::MusicVol>,
+    sfx: ResMut<'w, crate::audio::SfxVol>,
+    quality: ResMut<'w, crate::quality::QualityRes>,
+    bloom: ResMut<'w, crate::quality::BloomOn>,
+    fps: ResMut<'w, crate::hud::ShowFps>,
+}
+
+/// Valores de las opciones para dibujar las filas.
+struct OptVals {
+    sens: f32,
+    music: f32,
+    sfx: f32,
+    quality: &'static str,
+    bloom: bool,
+    fps: bool,
+}
+
+impl Opts<'_> {
+    fn vals(&self) -> OptVals {
+        OptVals { sens: self.settings.sens, music: self.music.0, sfx: self.sfx.0, quality: self.quality.label(), bloom: self.bloom.0, fps: self.fps.0 }
+    }
+    /// Mueve una opción para un lado (−1 / +1) y la guarda.
+    fn change(&mut self, k: u8, dir: f32) {
+        use crate::quality::Quality;
+        match k {
+            0 => {
+                self.settings.sens = ((self.settings.sens + dir * 0.1) * 10.0).round() / 10.0;
+                self.settings.sens = self.settings.sens.clamp(0.3, 6.0);
+                crate::config::set("sens", self.settings.sens);
+            }
+            1 => {
+                self.music.0 = ((self.music.0 + dir * 0.1) * 10.0).round().clamp(0.0, 10.0) / 10.0;
+                crate::config::set("musica", self.music.0);
+            }
+            2 => {
+                self.sfx.0 = ((self.sfx.0 + dir * 0.1) * 10.0).round().clamp(0.0, 10.0) / 10.0;
+                crate::config::set("efectos", self.sfx.0);
+            }
+            3 => {
+                let all = [Quality::Baja, Quality::Media, Quality::Alta];
+                let i = all.iter().position(|q| *q == self.quality.q).unwrap_or(1) as i32;
+                let n = (i + dir as i32).rem_euclid(3) as usize;
+                self.quality.set(all[n]);
+            }
+            4 => {
+                self.bloom.0 = !self.bloom.0;
+                crate::config::set("brillo", if self.bloom.0 { "1" } else { "0" });
+            }
+            _ => {
+                self.fps.0 = !self.fps.0;
+                crate::config::set("fps", if self.fps.0 { "1" } else { "0" });
+            }
+        }
+    }
 }
 
 #[derive(Resource, Default)]
@@ -292,15 +353,23 @@ enum Act {
     Op(usize),
     Waves(&'static str),
     Back,
+    OptionsPage,
+    /// Opción `k` (se ajusta con ← →; Enter o clic la sube).
+    Opt(u8),
+    /// Volver a empezar la operación en curso.
+    Restart(usize),
     None,
 }
 
-fn rows(menu: &Menu, prog: &Progress) -> Vec<(String, String, bool, Act)> {
+fn rows(menu: &Menu, prog: &Progress, o: &OptVals, camp: Option<usize>) -> Vec<(String, String, bool, Act)> {
     let mut v = Vec::new();
     match menu.page {
         Page::Main => {
             if menu.playing {
                 v.push(("VOLVER A LA PARTIDA".into(), "ESC".into(), true, Act::Resume));
+                if let Some(op) = camp {
+                    v.push(("REINICIAR LA OPERACIÓN".into(), format!("OP {} · {}", op + 1, OP_NAMES[op].to_uppercase()), true, Act::Restart(op)));
+                }
             }
             if prog.unlocked < N_OPS {
                 let n = prog.unlocked;
@@ -311,6 +380,7 @@ fn rows(menu: &Menu, prog: &Progress) -> Vec<(String, String, bool, Act)> {
             v.push(("ELEGIR OPERACIÓN".into(), format!("{}/{} DESBLOQUEADAS", (prog.unlocked + 1).min(N_OPS), N_OPS), true, Act::OpsPage));
             v.push(("MUNDO LIBRE".into(), "DISTRITO SUR SIN GUION".into(), true, Act::Free));
             v.push(("OLEADAS".into(), "ARENAS CERRADAS".into(), true, Act::WavesPage));
+            v.push(("OPCIONES".into(), "MOUSE · SONIDO · GRÁFICOS".into(), true, Act::OptionsPage));
             v.push(("SALIR".into(), String::new(), true, Act::Quit));
         }
         Page::Ops => {
@@ -323,6 +393,17 @@ fn rows(menu: &Menu, prog: &Progress) -> Vec<(String, String, bool, Act)> {
                 };
                 v.push((format!("{} · {}", i + 1, OP_NAMES[i].to_uppercase()), sub, open, Act::Op(i)));
             }
+            v.push(("VOLVER".into(), "ESC".into(), true, Act::Back));
+        }
+        Page::Options => {
+            let pct = |x: f32| format!("< {:.0} % >", x * 100.0);
+            let yes = |b: bool| if b { "< SÍ >".to_string() } else { "< NO >".to_string() };
+            v.push(("SENSIBILIDAD DEL MOUSE".into(), format!("< {:.1} >", o.sens), true, Act::Opt(0)));
+            v.push(("MÚSICA".into(), pct(o.music), true, Act::Opt(1)));
+            v.push(("EFECTOS".into(), pct(o.sfx), true, Act::Opt(2)));
+            v.push(("CALIDAD".into(), format!("< {} >", o.quality), true, Act::Opt(3)));
+            v.push(("BRILLO (BLOOM)".into(), yes(o.bloom), true, Act::Opt(4)));
+            v.push(("MOSTRAR FPS".into(), yes(o.fps), true, Act::Opt(5)));
             v.push(("VOLVER".into(), "ESC".into(), true, Act::Back));
         }
         Page::Waves => {
@@ -347,6 +428,7 @@ fn menu_input(
     mut exit: MessageWriter<AppExit>,
     mut snd: ResMut<crate::audio::Sounds>,
     mut p: Params,
+    mut opts: Opts,
 ) {
     let debrief = p.game.0.campaign.as_ref().is_some_and(|c| c.result.is_some());
     // en pausa, Enter abre el menú
@@ -363,7 +445,16 @@ fn menu_input(
     }
     cursor.visible = true;
     cursor.grab_mode = CursorGrabMode::None;
-    let list = rows(&menu, &prog);
+    let camp = p.game.0.campaign.as_ref().map(|c| c.op).filter(|_| menu.playing);
+    let list = rows(&menu, &prog, &opts.vals(), camp);
+    // ← → ajustan la opción elegida
+    if let Some(Act::Opt(k)) = list.get(menu.sel).map(|r| r.3) {
+        let dir = if key.just_pressed(KeyCode::ArrowLeft) || key.just_pressed(KeyCode::KeyA) { -1.0 } else if key.just_pressed(KeyCode::ArrowRight) || key.just_pressed(KeyCode::KeyD) { 1.0 } else { 0.0 };
+        if dir != 0.0 {
+            opts.change(k, dir);
+            snd.play(crate::audio::S::Swap);
+        }
+    }
     let n = list.len();
     if key.just_pressed(KeyCode::ArrowDown) || key.just_pressed(KeyCode::KeyS) {
         menu.sel = (menu.sel + 1) % n;
@@ -431,6 +522,15 @@ fn menu_input(
         Act::Quit => {
             exit.write(AppExit::Success);
         }
+        Act::OptionsPage => {
+            menu.page = Page::Options;
+            menu.sel = 0;
+        }
+        Act::Opt(k) => opts.change(k, 1.0),
+        Act::Restart(op) => {
+            start_op(&mut p, op);
+            play(&mut open, &mut menu);
+        }
     }
     snd.play(crate::audio::S::Pickup);
 }
@@ -447,6 +547,7 @@ fn menu_draw(
     mut subs: Query<(&MenuRowSub, &mut Text), (Without<MenuRowText>, Without<MenuTitle>, Without<MenuSub>)>,
     mut title: Query<&mut Text, (With<MenuTitle>, Without<MenuRowText>, Without<MenuRowSub>, Without<MenuSub>)>,
     mut sub: Query<&mut Text, (With<MenuSub>, Without<MenuRowText>, Without<MenuRowSub>, Without<MenuTitle>)>,
+    opt_res: (Res<crate::player::Settings>, Res<crate::audio::MusicVol>, Res<crate::audio::SfxVol>, Res<crate::quality::QualityRes>, Res<crate::quality::BloomOn>, Res<crate::hud::ShowFps>),
 ) {
     let show = open.0 && !game.0.campaign.as_ref().is_some_and(|c| c.result.is_some());
     for mut v in &mut root {
@@ -455,12 +556,16 @@ fn menu_draw(
     if !show {
         return;
     }
-    let list = rows(&menu, &prog);
+    let (settings, music, sfx, quality, bloom, fps) = opt_res;
+    let vals = OptVals { sens: settings.sens, music: music.0, sfx: sfx.0, quality: quality.label(), bloom: bloom.0, fps: fps.0 };
+    let camp = game.0.campaign.as_ref().map(|c| c.op).filter(|_| menu.playing);
+    let list = rows(&menu, &prog, &vals, camp);
     for mut t in &mut title {
         t.0 = match menu.page {
             Page::Main => "OPERACIONES EN EL DISTRITO SUR".into(),
             Page::Ops => "ELEGÍ LA OPERACIÓN".into(),
             Page::Waves => "OLEADAS · ELEGÍ LA ARENA".into(),
+            Page::Options => "OPCIONES".into(),
         };
     }
     for mut t in &mut sub {
@@ -468,6 +573,7 @@ fn menu_draw(
             Page::Main => "Ocho operaciones encadenadas. Vera te guía por radio. Cada una termina con un rango.".into(),
             Page::Ops => "Las operaciones anteriores cuentan como hechas: la ciudad queda como la dejaste.".into(),
             Page::Waves => "Drones, kamikazes, pesados y el Coloso cada cinco oleadas.".into(),
+            Page::Options => "Flechas izquierda y derecha cambian el valor. Se guarda solo.".into(),
         };
     }
     for (r, mut v, mut b, mut bg) in &mut rows_q {
@@ -650,7 +756,13 @@ fn radio_panel(
         *v = if show.cur.is_some() { Visibility::Inherited } else { Visibility::Hidden };
     }
     let Some((who, text, t)) = show.cur.as_ref() else { return };
-    let shown: String = text.chars().take((t * 55.0) as usize).collect();
+    let n_shown = (t * 55.0) as usize;
+    let shown: String = text.chars().take(n_shown).collect();
+    // "voz" de radio: un pitido cada cuatro letras mientras escribe
+    let before = ((t - dt) * 55.0).max(0.0) as usize;
+    if n_shown / 4 != before / 4 && n_shown < text.chars().count() {
+        snd.play_vol(crate::audio::S::Blip, 0.35);
+    }
     for (mut w, mut c) in &mut who_q {
         let s = format!("> {who}");
         if w.0 != s {

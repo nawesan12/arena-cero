@@ -84,9 +84,18 @@ dinámicas, economía, tienda, gadgets, día y noche, Ciudad 2.0, subte, peatone
 - Brillo (bloom) opcional con F5, apagado de entrada (pone HDR en las dos cámaras).
 - Partículas en un pool fijo de 600 en vez de crear y borrar una entidad por partícula.
 
+## Opciones, calles y radio (17/10/2026)
+
+- Menú de **opciones**: sensibilidad del mouse, música, efectos, calidad, brillo y FPS (← → cambian, se guarda solo).
+  La sensibilidad y el volumen de efectos ahora se guardan (`sens`, `efectos`).
+- **Reiniciar la operación** desde el menú de pausa (Esc → Enter).
+- El mapa táctico (Tab) muestra el objetivo de la campaña en dorado y los puestos dormidos en gris.
+- **Nombres de calles**: al acercarte a una esquina aparecen los carteles de las dos calles.
+- La radio de Vera tiene "voz": un pitido corto cada pocas letras mientras escribe.
+
 ## Lo que sigue
 
 - Ajustar el brillo, la campaña y las rachas jugando.
-- Nombres de calles; ragdoll de verdad.
+- Ragdoll de verdad.
 - Etapa online: servidor autoritativo (`arena_sim` headless), cuentas, ranking validado y cooperativo 2-4.
 - Arte: modelos glTF para reemplazar los procedurales.

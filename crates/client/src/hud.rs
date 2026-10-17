@@ -41,7 +41,7 @@ impl Plugin for HudPlugin {
 }
 
 #[derive(Resource)]
-struct ShowFps(bool);
+pub struct ShowFps(pub bool);
 
 /// Fuentes de la web: Saira Condensed para títulos y Share Tech Mono para números.
 #[derive(Resource, Clone)]

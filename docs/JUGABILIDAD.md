@@ -6,7 +6,9 @@ para la historia del port, [HISTORIAL.md](HISTORIAL.md).
 ## Modos
 
 Sin argumentos, `arena-cero` abre el **menú principal** (campaña, elegir operación, mundo libre,
-oleadas, salir). En pausa (Esc), Enter vuelve al menú.
+oleadas, opciones, salir). En pausa (Esc), Enter vuelve al menú; ahí también se puede reiniciar la operación.
+En **opciones** se ajustan sensibilidad, música, efectos, calidad, brillo y FPS con ← →.
+En la ciudad, al llegar a una esquina aparecen los **nombres de las calles**.
 
 | Modo | Cómo se abre | Qué es |
 |---|---|---|

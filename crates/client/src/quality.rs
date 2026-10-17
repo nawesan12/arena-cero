@@ -66,6 +66,24 @@ fn load() -> Quality {
     std::env::var("ARENA_Q").ok().or_else(|| crate::config::get("calidad")).and_then(|v| Quality::parse(&v)).unwrap_or(Quality::Media)
 }
 
+impl QualityRes {
+    /// Cambia la calidad desde el menú (como F1-F3) y la guarda.
+    pub fn set(&mut self, q: Quality) {
+        if q != self.q {
+            self.q = q;
+            self.dirty = true;
+            save(q);
+        }
+    }
+    pub fn label(&self) -> &'static str {
+        match self.q {
+            Quality::Baja => "BAJA",
+            Quality::Media => "MEDIA",
+            Quality::Alta => "ALTA",
+        }
+    }
+}
+
 fn save(q: Quality) {
     crate::config::set("calidad", q.name());
 }

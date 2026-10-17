@@ -48,7 +48,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { sens: 1.8, input: true }
+        Self { sens: crate::config::get_f32("sens").unwrap_or(1.8).clamp(0.3, 6.0), input: true }
     }
 }
 

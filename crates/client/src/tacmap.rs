@@ -16,6 +16,7 @@ const RED: Color = Color::srgb(1.0, 0.239, 0.353);
 const MINT: Color = Color::srgb(0.365, 1.0, 0.690);
 const ORANGE: Color = Color::srgb(1.0, 0.416, 0.180);
 const GREY: Color = Color::srgb(0.333, 0.376, 0.416);
+const GOLD: Color = Color::srgb(1.0, 0.84, 0.3);
 
 pub struct TacMapPlugin;
 
@@ -137,7 +138,8 @@ fn update(
         n.top = px(p.y);
         n.width = px(32.0 * k);
         n.height = px(32.0 * k);
-        *bc = BorderColor::all(if st.done { MINT } else if st.alarm > 0.0 { RED } else { AMBER });
+        // en la campaña, los puestos que todavía no despertaron van en gris
+        *bc = BorderColor::all(if st.done { MINT } else if st.asleep { GREY } else if st.alarm > 0.0 { RED } else { AMBER });
     }
     for (l, mut n, children) in &mut labels {
         let op = &c.outposts[l.0];
@@ -151,12 +153,14 @@ fn update(
                 if **t != v {
                     **t = v;
                 }
-                tc.0 = if st.done { MINT } else if st.alarm > 0.0 { RED } else { AMBER };
+                tc.0 = if st.done { MINT } else if st.asleep { GREY } else if st.alarm > 0.0 { RED } else { AMBER };
             }
         }
     }
     // reabastecimiento y enemigos conocidos
-    let mut pts: Vec<(Vec2, Color, f32)> = g.supplies(&level.0).iter().map(|(p, _)| (to(p.x, p.z), MINT, 9.0)).collect();
+    // objetivo de la campaña primero (y más grande), después reabastecimiento
+    let mut pts: Vec<(Vec2, Color, f32)> = g.campaign.iter().flat_map(|cp| cp.marks.iter().map(|p| (to(p.x, p.z), GOLD, 14.0))).collect();
+    pts.extend(g.supplies(&level.0).iter().map(|(p, _)| (to(p.x, p.z), MINT, 9.0)));
     for e in &g.enemies {
         if !e.alive() {
             continue;

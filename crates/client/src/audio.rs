@@ -268,6 +268,8 @@ pub enum S {
     Radio,
     /// Racha de bajas.
     Streak,
+    /// "Voz" de la radio: un pitido corto cada pocas letras.
+    Blip,
 }
 
 fn render(s: S) -> Pcm {
@@ -386,6 +388,7 @@ fn render(s: S) -> Pcm {
             b.tone(0.0, Saw, 392.0, 392.0, 0.7, 0.06);
             b.noise(0.0, 220.0, 0.6, 1.6, 0.35, Low);
         }
+        S::Blip => b.tone(0.0, Square, 880.0, 820.0, 0.025, 0.035),
         S::Streak => {
             b.tone(0.0, Square, 660.0, 660.0, 0.07, 0.07);
             b.tone(0.07, Square, 880.0, 880.0, 0.07, 0.07);
@@ -400,10 +403,10 @@ fn render(s: S) -> Pcm {
     b.into_pcm(MASTER, false)
 }
 
-const ALL: [S; 38] = [
+const ALL: [S; 39] = [
     S::Shot(0), S::Shot(1), S::Shot(2), S::Siren, S::Whiz, S::EShot, S::EShotBig, S::AlertBeep, S::Tag, S::Takedown, S::Plant, S::Objective,
     S::Ricochet, S::Hit, S::Crit, S::Hook, S::HookMiss, S::Launch, S::Dash, S::Perk, S::Boss, S::Kill, S::Boom, S::Enemy, S::Hurt, S::Reload,
-    S::Pickup, S::Empty, S::Aim, S::Swap, S::DJump, S::Slide, S::Toss, S::Beep, S::Crash, S::Train, S::Radio, S::Streak,
+    S::Pickup, S::Empty, S::Aim, S::Swap, S::DJump, S::Slide, S::Toss, S::Beep, S::Crash, S::Train, S::Radio, S::Streak, S::Blip,
 ];
 
 /// Motor: loop de 1 s con frecuencias enteras (fase continua al repetir). La velocidad de
@@ -515,6 +518,10 @@ pub struct MusicLevel(pub u8);
 #[derive(Resource)]
 pub struct MusicVol(pub f32);
 
+/// Volumen de los efectos (0..1), guardado como `efectos`.
+#[derive(Resource)]
+pub struct SfxVol(pub f32);
+
 #[derive(Component)]
 struct MusicLayer(u8);
 
@@ -525,6 +532,7 @@ impl Plugin for AudioSynthPlugin {
         app.add_audio_source::<Pcm>()
             .init_resource::<MusicLevel>()
             .insert_resource(MusicVol(crate::config::get_f32("musica").unwrap_or(0.6)))
+            .insert_resource(SfxVol(crate::config::get_f32("efectos").unwrap_or(1.0).clamp(0.0, 1.0)))
             .add_systems(Startup, setup_audio)
             .add_systems(Update, (play_queue, mix_music, mute_key));
     }
@@ -543,12 +551,15 @@ fn setup_audio(mut commands: Commands, mut pcm: ResMut<Assets<Pcm>>) {
 
 /// Los efectos con posición se ponen a 0,4 m del oyente en la dirección de la fuente: así el
 /// audio espacial solo panea (un oído entre 0,5 y 1) y no atenúa; la distancia ya está en el volumen.
-fn play_queue(mut commands: Commands, mut snd: ResMut<Sounds>, cam: Query<&GlobalTransform, With<SpatialListener>>) {
+fn play_queue(mut commands: Commands, mut snd: ResMut<Sounds>, sfx: Res<SfxVol>, cam: Query<&GlobalTransform, With<SpatialListener>>) {
     let q = std::mem::take(&mut snd.queue);
     let ear = cam.single().ok().map(|t| t.translation());
     for (s, v, at) in q {
         let Some(h) = snd.map.get(&s) else { continue };
-        let settings = PlaybackSettings::DESPAWN.with_volume(Volume::Linear(v));
+        if sfx.0 <= 0.0 {
+            continue;
+        }
+        let settings = PlaybackSettings::DESPAWN.with_volume(Volume::Linear(v * sfx.0));
         match (at, ear) {
             (Some(p), Some(e)) if p.distance_squared(e) > 0.25 => {
                 let pos = e + (p - e).normalize() * 0.4;
