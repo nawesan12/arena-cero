@@ -1,8 +1,11 @@
 //! Arena Cero, cliente nativo.
 //!
-//! Uso: `arena-cero [--map ciudad|deposito|fundicion|cantera|azotea] [--at x,z,yaw,pitch] [--shot archivo.png]`
+//! Uso: `arena-cero [--map ciudad|deposito|fundicion|cantera|azotea] [--at x,z,yaw,pitch] [--weapon 1-4] [--shot archivo.png]`
 //! `--shot` saca una captura a los pocos segundos y cierra (sirve para revisar cambios sin jugar).
 
+mod fx;
+mod gun;
+mod gunmodels;
 mod hud;
 mod materials;
 mod player;
@@ -20,6 +23,7 @@ struct Args {
     map: Option<MapId>,
     at: Option<[f32; 4]>,
     shot: Option<String>,
+    weapon: Option<usize>,
 }
 
 fn parse_args() -> Args {
@@ -44,6 +48,7 @@ fn parse_args() -> Args {
                 }
             }
             "--shot" => a.shot = it.next(),
+            "--weapon" => a.weapon = it.next().and_then(|w| w.parse::<usize>().ok()).map(|w| w.clamp(1, 4) - 1),
             _ => eprintln!("opción desconocida: {k}"),
         }
     }
@@ -58,7 +63,7 @@ fn main() {
             ..default()
         }))
         .insert_resource(args)
-        .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin))
+        .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin, gun::GunPlugin, fx::FxPlugin))
         .add_systems(PreStartup, setup)
         .add_systems(Update, (world_render::follow_sky, world_render::animate_lava, auto_shot))
         .run();
@@ -83,7 +88,7 @@ fn setup(mut commands: Commands, args: Res<Args>, mut quality: ResMut<quality::Q
     // en modo captura no se toma el mouse: la ventana puede quedar debajo de otras
     settings.input = args.shot.is_none();
     let res = world_render::LevelRes(level);
-    player::spawn_player(&mut commands, &res, args.at);
+    player::spawn_player(&mut commands, &res, args.at, args.weapon);
     commands.insert_resource(res);
     commands.insert_resource(looks);
 }

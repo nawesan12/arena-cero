@@ -20,7 +20,8 @@ Toolchain: Rust estable ≥ 1.97.1 (Bevy 0.20 lo exige). Workspace de Cargo:
 Comandos:
 - `cargo test -p arena_sim` — tests de la simulación.
 - `cargo run -p arena_client -- --map ciudad` (también deposito, fundicion, cantera, azotea).
-- `cargo run -p arena_client -- --at x,z,yaw,pitch --shot captura.png` — captura a los 3 s y sale (para revisar cambios).
+- `cargo run -p arena_client -- --at x,z,yaw,pitch --weapon 1-4 --shot captura.png` — captura a los 3 s y sale.
+  Ojo: si la ventana queda tapada, la captura sale negra (no es un bug del render).
 
 Reglas del port:
 - Valores, orden de llamadas al RNG y diseño, tal cual la web. Si se corrige un bug de la web, dejarlo comentado.
@@ -34,7 +35,9 @@ Reglas del port:
 3. **PvP**: compensación de lag para los disparos y anti-trampas.
 
 ## Orden del port
-Hecho: mundo y colisiones, los 5 mapas (ciudad + 4 arenas), movimiento completo del jugador, render básico.
+Hecho: mundo y colisiones, los 5 mapas (ciudad + 4 arenas), movimiento completo del jugador, render, calidad con
+tope de FPS (F1/F2/F3, siempre con tope: alta 120, 30 fuera de juego), armas (sim + modelos procedurales en primera
+persona, disparo contra el mundo, granadas, explosiones, HUD de munición). Falta: enemigos, objetivos, audio, menú.
 
 1. **Jugador** (`18-ciclo-de-juego.js`, `21-gancho...js`): CharacterBody3D con correr, agacharse/deslizar, doble salto, dash (Q) y gancho (Ctrl/E). Valores: velocidad 7 (10 corriendo), salto 8.2, gravedad 24, gancho 55 m con tirón 58 y tope 34 m/s, dash 24 m/s 0,16 s cada 3 s.
 2. **Armas** (`04-armas.js`, `16-disparo...js`, `06-materiales...js`): rifle, escopeta (9 perdigones), riel (atraviesa), lanzagranadas. Apuntado con click derecho, retroceso, críticos al núcleo/cabeza ×2.

@@ -102,7 +102,7 @@ fn switch_quality(key: Res<ButtonInput<KeyCode>>, mut q: ResMut<QualityRes>) {
     }
 }
 
-fn apply_quality(mut q: ResMut<QualityRes>, mut shadow: ResMut<DirectionalLightShadowMap>, mut cam: Query<(&mut Projection, &mut DistanceFog, &mut Msaa), With<MainCamera>>) {
+fn apply_quality(mut q: ResMut<QualityRes>, mut shadow: ResMut<DirectionalLightShadowMap>, mut cam: Query<(&mut Projection, &mut DistanceFog, &mut Msaa), With<MainCamera>>, mut gun_cam: Query<&mut Msaa, (With<crate::gun::GunCamera>, Without<MainCamera>)>) {
     if !q.dirty {
         return;
     }
@@ -115,6 +115,10 @@ fn apply_quality(mut q: ResMut<QualityRes>, mut shadow: ResMut<DirectionalLightS
     let end = q.fog[1].min(p.far - 10.0);
     fog.falloff = FogFalloff::Linear { start: q.fog[0].min(end * 0.4), end };
     *msaa = p.msaa;
+    // las dos cámaras dibujan sobre la misma ventana: tienen que usar el mismo antialias
+    for mut m in &mut gun_cam {
+        *m = p.msaa;
+    }
     q.dirty = false;
 }
 
