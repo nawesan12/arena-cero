@@ -1096,6 +1096,7 @@ pub fn build(w: &mut World) -> CityData {
     ];
     let loot_spots = std::mem::take(&mut b.spots);
     let streets = vec![-242.0, -198.0, -156.0, -110.0, -66.0, -22.0, 22.0, 66.0, 110.0, 156.0, 198.0, 242.0];
+    city2::decor(b.w, &streets);
     CityData { outposts, safe_pos, drone_routes, vehicles, loot_spots, streets, stations }
 }
 
@@ -1269,6 +1270,18 @@ mod tests {
         // se reaparece corrido 1,5 m de la caja de reabastecimiento, sobre la vereda
         let g = l.world.ground_at(c.safe_pos.x + 1.5, c.safe_pos.z + 1.5, 1.0);
         assert!(g < 1.0, "piso del refugio {g}");
+    }
+
+    #[test]
+    fn decorado_de_barrios() {
+        use crate::mat::Mat;
+        let l = crate::maps::build_level(crate::maps::MapId::Ciudad);
+        let n = |f: &dyn Fn(Mat) -> bool| l.world.visuals.iter().filter(|v| f(v.mat)).count();
+        let carteles = n(&|m| matches!(m, Mat::Billboard(_)));
+        let neon = n(&|m| matches!(m, Mat::Neon(_))) / 4;
+        let bolardos = n(&|m| m == Mat::Bollard);
+        eprintln!("carteles {carteles} · techos con neón {neon} · bolardos y tachos {bolardos}");
+        assert!(carteles > 15 && neon > 10 && bolardos > 20);
     }
 
     #[test]

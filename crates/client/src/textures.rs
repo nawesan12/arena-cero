@@ -407,6 +407,125 @@ pub fn plaster() -> Image {
     g.into_image()
 }
 
+/// Ladrillo (nuevo): hiladas de 7,5 cm con junta clara y piezas de tono variado. 256 px = 3 m.
+pub fn brick() -> Image {
+    brick_canvas().into_image()
+}
+
+fn brick_canvas() -> Canvas {
+    let s = 256;
+    let mut r = Rng::new(21);
+    let mut g = Canvas::new(s, hex(0xd9d2c4));
+    let (bw, bh) = (20.0, 6.4);
+    let rows = (s as f32 / bh) as i32;
+    for row in 0..rows {
+        let y = row as f32 * bh;
+        let off = if row % 2 == 0 { 0.0 } else { bw / 2.0 };
+        let mut x = -off;
+        while x < s as f32 {
+            let v = 0.82 + r.f() * 0.22;
+            let warm = r.f() * 18.0;
+            g.rect(x + 1.0, y + 1.0, bw - 1.6, bh - 1.4, rgba(200.0 * v + warm, 120.0 * v, 96.0 * v, 1.0));
+            // manchas dentro de cada ladrillo
+            if r.next() < 0.3 {
+                g.rect(x + 2.0 + r.f() * 10.0, y + 1.5, 4.0, 2.0, rgba(90.0, 50.0, 40.0, 0.25));
+            }
+            x += bw;
+        }
+    }
+    // suciedad que baja de las ventanas
+    for _ in 0..5 {
+        let x = r.f() * s as f32;
+        g.rect(x, 0.0, 6.0 + r.f() * 10.0, s as f32, rgba(60.0, 50.0, 45.0, 0.06));
+    }
+    g
+}
+
+/// Paneles de hormigón premoldeado (nuevo): juntas cada 1,5 m, bulones y manchas. 128 px = 3 m.
+pub fn panel() -> Image {
+    panel_canvas().into_image()
+}
+
+fn panel_canvas() -> Canvas {
+    let s = 128;
+    let sf = s as f32;
+    let mut r = Rng::new(23);
+    let mut g = Canvas::new(s, hex(0xe6e4df));
+    for _ in 0..1800 {
+        let v = (205.0 + r.f() * 45.0).floor();
+        g.rect(r.f() * sf, r.f() * sf, 2.0, 2.0, rgba(v, v, v - 4.0, 0.35));
+    }
+    for k in 0..2 {
+        let o = k as f32 * sf / 2.0;
+        g.rect(o, 0.0, 1.5, sf, rgba(70.0, 70.0, 68.0, 0.7));
+        g.rect(0.0, o, sf, 1.5, rgba(70.0, 70.0, 68.0, 0.7));
+        for (bx, by) in [(6.0, 6.0), (sf / 2.0 - 8.0, 6.0), (6.0, sf / 2.0 - 8.0), (sf / 2.0 - 8.0, sf / 2.0 - 8.0)] {
+            g.rect(o + bx, by, 2.0, 2.0, rgba(90.0, 90.0, 88.0, 0.6));
+            g.rect(bx, o + by, 2.0, 2.0, rgba(90.0, 90.0, 88.0, 0.6));
+        }
+    }
+    for _ in 0..4 {
+        let (x, y) = (r.f() * sf, r.f() * sf);
+        g.rect(x, y, 3.0 + r.f() * 4.0, 18.0 + r.f() * 30.0, rgba(110.0, 104.0, 96.0, 0.12));
+    }
+    g
+}
+
+/// Carteles publicitarios (nuevo): cuatro diseños sin texto (franjas, sol, ondas, bloques)
+/// con colores vivos. Se dibujan sin luz (`unlit`): de noche "se prenden" solos.
+pub fn billboard(k: u8) -> Image {
+    billboard_canvas(k).into_image()
+}
+
+fn billboard_canvas(k: u8) -> Canvas {
+    let s = 128;
+    let sf = s as f32;
+    let pal: [[u32; 3]; 4] = [[0xe63946, 0xf1faee, 0x1d3557], [0xffb703, 0xfb8500, 0x023047], [0x2ec4b6, 0xcbf3f0, 0xff006e], [0x8338ec, 0x3a86ff, 0xffbe0b]];
+    let p = pal[k as usize % 4];
+    let mut g = Canvas::new(s, hex(p[2]));
+    match k % 4 {
+        0 => {
+            for i in 0..6 {
+                g.line(i as f32 * 26.0 - 30.0, sf, i as f32 * 26.0 + 30.0, 0.0, 9.0, hex(p[0]));
+            }
+            g.rect(14.0, 40.0, sf - 28.0, 48.0, hex(p[1]));
+            g.rect(22.0, 50.0, 60.0, 8.0, hex(p[2]));
+            g.rect(22.0, 66.0, 40.0, 6.0, hex(p[0]));
+        }
+        1 => {
+            g.vgrad(&[(0.0, hex(p[0])), (1.0, hex(p[2]))]);
+            g.radial(sf * 0.7, sf * 0.45, 34.0, hex(p[1]), hex(p[1]).a(0.0));
+            g.ellipse(sf * 0.7, sf * 0.45, 20.0, 20.0, hex(0xfff3c4));
+            g.rect(10.0, 90.0, 70.0, 10.0, hex(0xffffff));
+            g.rect(10.0, 106.0, 46.0, 6.0, hex(0xffffff).a(0.7));
+        }
+        2 => {
+            for i in 0..5 {
+                let y = 20.0 + i as f32 * 20.0;
+                let mut x = 0.0;
+                while x < sf {
+                    let yy = y + (x * 0.08 + i as f32).sin() * 6.0;
+                    g.rect(x, yy, 2.0, 5.0, hex(if i % 2 == 0 { p[0] } else { p[1] }));
+                    x += 1.0;
+                }
+            }
+            g.ellipse(sf * 0.25, sf * 0.3, 16.0, 16.0, hex(p[2]));
+        }
+        _ => {
+            let mut r = Rng::new(31);
+            for _ in 0..14 {
+                let c = hex(p[r.idx(3)]);
+                g.rect(r.f() * sf, r.f() * sf, 10.0 + r.f() * 30.0, 10.0 + r.f() * 30.0, c);
+            }
+            g.rect(12.0, sf - 34.0, sf - 24.0, 20.0, hex(0x111111));
+            g.rect(18.0, sf - 28.0, 50.0, 8.0, hex(0xffffff));
+        }
+    }
+    // marco
+    g.stroke_rect(1.0, 1.0, sf - 2.0, sf - 2.0, 3.0, hex(0x202020));
+    g
+}
+
 pub fn glass() -> Image {
     let s = 128;
     let sf = s as f32;
@@ -440,4 +559,26 @@ pub fn sky(city: bool) -> Image {
         g.ellipse(x, y, w, w * if city { 0.16 } else { 0.18 }, rgba(255.0, 255.0, 255.0, if city { 0.4 } else { 0.35 }));
     }
     g.into_image()
+}
+
+#[cfg(test)]
+mod preview {
+    use super::*;
+
+    /// `ARENA_TEX=carpeta cargo test -p arena_client preview`: guarda las texturas nuevas como PPM para mirarlas.
+    #[test]
+    fn guardar_texturas_nuevas() {
+        let Some(dir) = std::env::var_os("ARENA_TEX") else { return };
+        let mut list = vec![("ladrillo", brick_canvas()), ("paneles", panel_canvas())];
+        for k in 0..4 {
+            list.push((["cartel0", "cartel1", "cartel2", "cartel3"][k as usize], billboard_canvas(k)));
+        }
+        for (name, c) in list {
+            let mut out = format!("P3\n{} {}\n255\n", c.s, c.s).into_bytes();
+            for p in &c.px {
+                out.extend(format!("{} {} {}\n", (p[0] * 255.0) as u8, (p[1] * 255.0) as u8, (p[2] * 255.0) as u8).bytes());
+            }
+            std::fs::write(std::path::Path::new(&dir).join(format!("{name}.ppm")), out).unwrap();
+        }
+    }
 }

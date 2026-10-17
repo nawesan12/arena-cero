@@ -393,6 +393,115 @@ impl B<'_> {
     }
 }
 
+/// Número pseudoaleatorio 0..1 a partir de una posición: el decorado no consume el RNG de la
+/// ciudad, así el resto del distrito sale idéntico.
+fn hash(x: f32, z: f32, k: f32) -> f32 {
+    ((x * 12.9898 + z * 78.233 + k * 37.719).sin() * 43_758.547).fract().abs()
+}
+
+/// Decorado (nuevo, solo visual): carteles en azoteas, neón en bordes de techos y objetos de
+/// calle según el barrio (pallets en el Puerto, bolardos y macetas en el Centro Financiero,
+/// cercos en el Barrio Jardín, tachos y cajones en El Cerro).
+pub(super) fn decor(w: &mut World, streets: &[f32]) {
+    // azoteas (también las giradas del bulevar y la diagonal)
+    let roofs: Vec<(Vec3, Vec3, f32)> = w.visuals.iter().filter(|v| v.mat == Mat::Roof && v.size.x >= 6.0 && v.size.z >= 6.0 && v.size.y <= 1.2 && v.center.y >= 5.0).map(|v| (v.center, v.size, v.yaw)).collect();
+    let mut used: Vec<Vec3> = Vec::new();
+    for (c, sz, yaw) in roofs {
+        if used.iter().any(|u| u.distance(c) < 14.0) {
+            continue;
+        }
+        let top = c.y + sz.y / 2.0;
+        // del marco local del techo (eje x a lo ancho, z a lo hondo) al mundo
+        let (sy, cy) = yaw.sin_cos();
+        let at = |lx: f32, lz: f32| Vec3::new(c.x + lx * cy + lz * sy, 0.0, c.z - lx * sy + lz * cy);
+        let h = hash(c.x, c.z, 1.0);
+        if h < 0.38 {
+            used.push(c);
+            let k = (hash(c.x, c.z, 2.0) * 4.0) as u8;
+            let along_x = sz.x >= sz.z;
+            let side = if hash(c.x, c.z, 3.0) < 0.5 { -1.0 } else { 1.0 };
+            let width = (if along_x { sz.x } else { sz.z } * 0.7).min(11.0);
+            let ph = width * 0.45;
+            let (lx, lz) = if along_x { (0.0, side * (sz.z / 2.0 - 1.2)) } else { (side * (sz.x / 2.0 - 1.2), 0.0) };
+            let p = at(lx, lz);
+            let (w_, d_) = if along_x { (width, 0.18) } else { (0.18, width) };
+            w.add_visual_rot(p.x, top + 1.3 + ph / 2.0, p.z, w_, ph, d_, yaw, Mat::Billboard(k), true);
+            for e in [-0.4f32, 0.4] {
+                let q = if along_x { at(e * width, lz) } else { at(lx, e * width) };
+                w.add_visual_rot(q.x, top + 0.65, q.z, 0.18, 1.3, 0.18, yaw, Mat::Pole, true);
+            }
+        } else if h > 0.72 {
+            used.push(c);
+            let k = (hash(c.x, c.z, 4.0) * 4.0) as u8;
+            let y = top + 0.08;
+            for (lx, lz, ww, dd) in [(0.0, -sz.z / 2.0, sz.x, 0.12), (0.0, sz.z / 2.0, sz.x, 0.12), (-sz.x / 2.0, 0.0, 0.12, sz.z), (sz.x / 2.0, 0.0, 0.12, sz.z)] {
+                let p = at(lx, lz);
+                w.add_visual_rot(p.x, y, p.z, ww, 0.12, dd, yaw, Mat::Neon(k), false);
+            }
+        }
+    }
+    // objetos de calle por barrio, sobre la vereda a 7 m del eje
+    let a = w.a - 6.0;
+    for &s in streets {
+        let mut t = -a;
+        while t < a {
+            for side in [-7.0f32, 7.0] {
+                for along_x in [true, false] {
+                    let (x, z) = if along_x { (t, s + side) } else { (s + side, t) };
+                    // ni en las esquinas ni en el centro original
+                    if streets.iter().any(|o| (o - t).abs() < 9.0) || (x.abs() < CORE_A && z.abs() < CORE_A) {
+                        continue;
+                    }
+                    let r = hash(x, z, 5.0);
+                    if r > 0.45 {
+                        continue;
+                    }
+                    let free = |p: Vec3, w: &World| w.box_at(p).is_none() && w.ground_at(p.x, p.z, 1.0) < 0.4 && !w.in_hole(p.x, p.z);
+                    if !free(Vec3::new(x, 0.6, z), w) || !free(Vec3::new(x + 0.8, 0.6, z + 0.8), w) || !free(Vec3::new(x - 0.8, 0.6, z - 0.8), w) {
+                        continue;
+                    }
+                    let g = w.ground_at(x, z, 1.0);
+                    if z < -CORE_A {
+                        // Puerto: pallets apilados
+                        let n = 1 + (r * 8.0) as u32 % 3;
+                        for i in 0..n {
+                            w.add_visual(x, g + 0.08 + i as f32 * 0.16, z, 1.2, 0.14, 1.0, Mat::Wood, true);
+                        }
+                    } else if x > CORE_A {
+                        // Centro Financiero: bolardos y macetas
+                        if r < 0.25 {
+                            for k in -1..=1 {
+                                let o = k as f32 * 1.4;
+                                let (bx, bz) = if along_x { (x + o, z) } else { (x, z + o) };
+                                w.add_visual(bx, g + 0.45, bz, 0.22, 0.9, 0.22, Mat::Bollard, true);
+                            }
+                        } else {
+                            w.add_visual(x, g + 0.3, z, 1.2, 0.6, 1.2, Mat::Jersey, true);
+                            w.add_visual(x, g + 0.75, z, 1.0, 0.4, 1.0, Mat::Hedge, true);
+                        }
+                    } else if z > CORE_A {
+                        // Barrio Jardín: cerco bajo de madera
+                        let (lw, ld) = if along_x { (3.0, 0.08) } else { (0.08, 3.0) };
+                        w.add_visual(x, g + 0.5, z, lw, 0.08, ld, Mat::Wood, true);
+                        w.add_visual(x, g + 0.25, z, lw, 0.08, ld, Mat::Wood, true);
+                        for k in [-1.4f32, 0.0, 1.4] {
+                            let (px, pz) = if along_x { (x + k, z) } else { (x, z + k) };
+                            w.add_visual(px, g + 0.35, pz, 0.1, 0.7, 0.1, Mat::Wood, true);
+                        }
+                    } else {
+                        // El Cerro: tacho y cajones
+                        w.add_visual(x, g + 0.5, z, 0.7, 1.0, 0.7, Mat::Bollard, true);
+                        if r < 0.2 {
+                            w.add_visual(x + 1.0, g + 0.25, z, 0.6, 0.5, 0.5, Mat::Crate, true);
+                        }
+                    }
+                }
+            }
+            t += 12.0;
+        }
+    }
+}
+
 /// Arma todo lo de Ciudad 2.0. Devuelve las estaciones de subte.
 pub(super) fn build(b: &mut B) -> Vec<Station> {
     let mut stations = Vec::new();

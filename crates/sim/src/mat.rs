@@ -51,6 +51,12 @@ pub enum Mat {
     Tile,
     /// Balasto de las vías.
     Gravel,
+    /// 0..4: carteles publicitarios de las azoteas (se ven sin luz: de noche brillan).
+    Billboard(u8),
+    /// 0..4: neón del borde de algunas azoteas.
+    Neon(u8),
+    /// Bolardos y tachos metálicos de la calle.
+    Bollard,
 }
 
 pub const FACADES: u8 = 8;

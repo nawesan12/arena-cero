@@ -33,6 +33,7 @@ impl Plugin for PlayerPlugin {
             .init_resource::<Look>()
             .init_resource::<Latch>()
             .init_resource::<Settings>()
+            .init_resource::<HitStop>()
             .add_systems(Update, (grab_cursor, mouse_look, latch_input, test_hook).chain())
             .add_systems(FixedUpdate, step_player)
             .add_systems(PostUpdate, place_camera.before(TransformSystems::Propagate));
@@ -51,6 +52,10 @@ impl Default for Settings {
     }
 }
 
+/// Congelamiento corto al matar (hit-stop): la partida se frena unos pasos para que el golpe pese.
+#[derive(Resource, Default)]
+pub struct HitStop(pub f32);
+
 /// Vista: se actualiza cada cuadro (no cada paso) para que el mouse responda sin demora.
 #[derive(Resource, Default)]
 pub struct Look {
@@ -60,6 +65,8 @@ pub struct Look {
     /// Inercia del arma al mover el mouse.
     pub sway_x: f32,
     pub sway_y: f32,
+    /// Golpe de campo de visión al matar (grados, se desvanece solo).
+    pub punch: f32,
 }
 
 /// Pulsaciones guardadas hasta el próximo paso fijo (si no, se perderían entre pasos).
@@ -169,6 +176,8 @@ pub fn spawn_player(commands: &mut Commands, level: &LevelRes, start: Option<[f3
         Projection::from(PerspectiveProjection { fov: BASE_FOV.to_radians(), near: 0.05, far: 360.0, ..default() }),
         Tonemapping::None,
         Exposure::default(),
+        // oídos a 0,5 m: sirve para panear los efectos que traen posición
+        SpatialListener::new(0.5),
         DistanceFog { color: crate::world_render::col(info.bg), falloff: FogFalloff::Linear { start: info.fog[0].min(fog_end * 0.4), end: fog_end }, ..default() },
         Transform::from_translation(Vec3::new(info.start[0], 1.6, info.start[1])),
         crate::world_render::LevelEntity,
@@ -246,7 +255,7 @@ fn step_player(
     mut fx: ResMut<Fx>,
     mut snd: ResMut<Sounds>,
     (mut perks, shop, torch, subway): (ResMut<PerkState>, Res<crate::shop::ShopOpen>, Res<crate::daynight::Flashlight>, Res<crate::subway::SubwayOpen>),
-    (menu, settings): (Res<crate::campaign_ui::MenuOpen>, Res<Settings>),
+    (menu, settings, mut hitstop, mut decals): (Res<crate::campaign_ui::MenuOpen>, Res<Settings>, ResMut<HitStop>, ResMut<crate::decals::Decals>),
 ) {
     if perks.active() || shop.0 || subway.0 || menu.0 {
         return;
@@ -257,6 +266,10 @@ fn step_player(
     }
     // operación terminada: queda congelada detrás del resumen
     if game.0.campaign.as_ref().is_some_and(|c| c.result.is_some()) {
+        return;
+    }
+    if hitstop.0 > 0.0 {
+        hitstop.0 -= TICK;
         return;
     }
     let playing = cursor.grab_mode != CursorGrabMode::None;
@@ -389,8 +402,8 @@ fn step_player(
         match e {
             GameEvent::Hurt { dmg, from } => lp.hurt(dmg, from),
             GameEvent::Sound(x) => match x {
-                Snd::EShot { dist, big } => snd.play_vol(if big { S::EShotBig } else { S::EShot }, ((if big { 0.5 } else { 0.25 }) - dist * 0.005).max(0.02)),
-                Snd::Enemy { dist } => snd.play_vol(S::Enemy, (0.14 - dist * 0.004).max(0.02)),
+                Snd::EShot { dist, big, at } => snd.play_at(if big { S::EShotBig } else { S::EShot }, ((if big { 0.5 } else { 0.25 }) - dist * 0.005).max(0.02), at),
+                Snd::Enemy { dist, at } => snd.play_at(S::Enemy, (0.14 - dist * 0.004).max(0.02), at),
                 Snd::Whiz => snd.play(S::Whiz),
                 Snd::Boss => snd.play(S::Boss),
                 Snd::Siren => snd.play(S::Siren),
@@ -421,6 +434,19 @@ fn step_player(
             GameEvent::Mark(m) => {
                 ui.mark = Some(m);
                 ui.mark_t = if m == Mark::Kill { 0.25 } else { 0.12 };
+                if m == Mark::Kill {
+                    // la baja pesa: un instante congelado, la vista se abre y tiembla un poco
+                    hitstop.0 = hitstop.0.max(0.05);
+                    look.punch = 3.0;
+                    lp.state.shake = (lp.state.shake + 0.12).min(1.0);
+                }
+            }
+            GameEvent::Impact { pos, normal } => decals.add(pos, normal),
+            GameEvent::Streak(n) => {
+                ui.streak = Some((n, 0.0));
+                snd.play(S::Streak);
+                hitstop.0 = hitstop.0.max(0.07);
+                look.punch = 5.0;
             }
             GameEvent::Num { pos, value, crit } => ui.nums.push((pos, value, crit, 0.0)),
             GameEvent::Heal(h) => lp.hp = (lp.hp + h).min(lp.max_hp),
@@ -481,6 +507,10 @@ fn step_player(
                 let total = if ui.popup_t > 0.0 { ui.popup.map_or(0, |p| p.0) } else { 0 } + points;
                 ui.popup = Some((total, label));
                 ui.popup_t = 1.4;
+                ui.feed.push((format!("{label} +{points}"), 0.0));
+                if ui.feed.len() > 5 {
+                    ui.feed.remove(0);
+                }
             }
         }
     }
@@ -616,8 +646,9 @@ fn place_camera(
     let roll = if s.slide > 0.0 { -0.06 } else { 0.0 } * s.crouch_t;
     t.translation = eye;
     t.rotation = Quat::from_euler(EulerRot::YXZ, look.yaw + jitter(1.3), look.pitch + jitter(7.1), roll);
+    look.punch *= (1.0 - dt * 9.0).max(0.0);
     if let Projection::Perspective(p) = &mut *proj {
-        p.fov = look.fov.to_radians();
+        p.fov = (look.fov + look.punch).to_radians();
     }
 }
 

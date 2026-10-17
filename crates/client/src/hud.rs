@@ -585,7 +585,11 @@ fn top(
                 None => String::new(),
             }),
             T::Score => set(&mut t, fmt_thousands(g.score)),
-            T::Combo => set(&mut t, if g.combo > 1 && !city { format!("COMBO ×{}", g.combo) } else { String::new() }),
+            T::Combo => set(&mut t, match (g.combo > 1, city) {
+                (true, true) => format!("RACHA ×{}", g.combo),
+                (true, false) => format!("COMBO ×{}", g.combo),
+                _ => String::new(),
+            }),
             T::BTitle => {
                 c.0 = INK.with_alpha(banner_a);
                 set(&mut t, ui.banner.as_ref().map(|b| b.0.clone()).unwrap_or_default());

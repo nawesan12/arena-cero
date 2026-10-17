@@ -362,7 +362,13 @@ fn sync_enemies(
                     }
                 }
                 Kind::Turret => rt.rotation = Quat::IDENTITY,
-                Kind::Soldier(_) => rt.rotation = Quat::from_rotation_y(e.yaw),
+                Kind::Soldier(_) => {
+                    // al recibir un golpe se sacude hacia atrás, lejos del jugador
+                    let away = (e.pos - eye).with_y(0.0).normalize_or_zero();
+                    let lean = (e.flash / 0.07).clamp(0.0, 1.0) * 0.22;
+                    let axis = Vec3::Y.cross(away).normalize_or(Vec3::X);
+                    rt.rotation = Quat::from_axis_angle(axis, lean) * Quat::from_rotation_y(e.yaw);
+                }
             }
         }
         let flashing = e.flash > 0.0;

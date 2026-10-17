@@ -25,6 +25,10 @@ pub struct UiFeed {
     pub credit_t: f32,
     /// Radio de la campaña: líneas en espera (quién, texto).
     pub radio: std::collections::VecDeque<(&'static str, String)>,
+    /// Racha en pantalla: cantidad y edad.
+    pub streak: Option<(u32, f32)>,
+    /// Lista de bajas y puntos (texto, edad), la más nueva al final.
+    pub feed: Vec<(String, f32)>,
     /// Carteles que llegaron mientras se mostraba otro.
     pub banner_queue: std::collections::VecDeque<(String, String)>,
 }

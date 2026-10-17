@@ -20,9 +20,10 @@ pub enum Mode {
 /// Sonidos que pide la partida (el cliente los traduce a sus efectos).
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Snd {
-    EShot { dist: f32, big: bool },
+    /// Disparo enemigo: distancia (volumen) y de dónde viene (paneo).
+    EShot { dist: f32, big: bool, at: Vec3 },
     Whiz,
-    Enemy { dist: f32 },
+    Enemy { dist: f32, at: Vec3 },
     Boss,
     Siren,
     AlertBeep,
@@ -91,6 +92,10 @@ pub enum GameEvent {
     Radio { who: &'static str, text: String },
     /// Campaña: volviste al último punto de control (el cliente restaura vida y munición).
     Respawn { pos: Vec3, yaw: f32 },
+    /// Bala del jugador contra una pared o el piso: punto y normal (marca de impacto).
+    Impact { pos: Vec3, normal: Vec3 },
+    /// Racha: bajas seguidas (2 = doble, 3 = triple...).
+    Streak(u32),
 }
 
 /// Qué arma `Game::new_with`: el mundo libre trae todo; la campaña despierta cada puesto cuando
@@ -580,13 +585,23 @@ impl Game {
         false
     }
 
+    /// Racha de bajas en la ciudad: cada baja dentro de 4 s de la anterior suma y da 50 por nivel.
+    fn streak(&mut self) -> u32 {
+        self.combo = if self.combo_t > 0.0 { (self.combo + 1).min(9) } else { 1 };
+        self.combo_t = 4.0;
+        if self.combo >= 2 {
+            self.events.push(GameEvent::Streak(self.combo));
+        }
+        50 * (self.combo - 1)
+    }
+
     fn kill(&mut self, i: usize, level: &mut Level) {
         let e = self.enemies[i].clone();
         self.kills += 1;
         match e.kind {
             Kind::Soldier(sk) => {
                 let stealth = e.op.and_then(|o| self.city.as_ref().map(|c| c.ops[o].alarm <= 0.0)).unwrap_or(false);
-                let pts = e.value + if stealth { 60 } else { 0 };
+                let pts = e.value + if stealth { 60 } else { 0 } + self.streak();
                 self.score += pts;
                 let label = if stealth { "BAJA SILENCIOSA" } else if sk == SoldierKind::Commander { "COMANDANTE" } else { "BAJA" };
                 self.events.push(GameEvent::Score { points: pts, label });
@@ -611,8 +626,9 @@ impl Game {
                 }
             }
             Kind::Turret => {
-                self.score += e.value;
-                self.events.push(GameEvent::Score { points: e.value, label: "TORRETA" });
+                let bonus = self.streak();
+                self.score += e.value + bonus;
+                self.events.push(GameEvent::Score { points: e.value + bonus, label: "TORRETA" });
                 self.add_credits(50, "TORRETA");
                 if let Some(c) = self.city.as_mut() {
                     if let Some(k) = c.turret_cols.iter().position(|t| t.0 == e.id) {
@@ -746,11 +762,13 @@ impl Game {
                     any_hit = true;
                 }
             }
+            let mut world_hit = car_hit.is_none();
             if let Some((pi, t)) = self.ray_people(p.origin, p.dir, wt) {
                 let first_enemy = ray_enemies(&self.enemies, p.origin, p.dir, wt, p.origin).first().map_or(f32::MAX, |h| h.dist);
                 if t < first_enemy {
                     self.hurt_person(pi);
                     wt = t;
+                    world_hit = false;
                 }
             }
             let hits = ray_enemies(&self.enemies, p.origin, p.dir, wt, p.origin);
@@ -783,6 +801,10 @@ impl Game {
                 let b = p.origin + p.dir * wt;
                 self.burst(b, if pierce { 0x5fd8ff } else { 0xffb02e }, if pierce { 10 } else { 3 }, 4.0, 0.3);
                 end = Some(b);
+                if world_hit {
+                    let normal = surface_normal(&level.world, b, p.dir);
+                    self.ev(GameEvent::Impact { pos: b, normal });
+                }
             }
             let end = end.unwrap_or(p.origin + p.dir * 80.0);
             if pierce || k % 3 == 0 {
@@ -1012,11 +1034,11 @@ impl Game {
                         self.ev(GameEvent::Sound(Snd::Whiz));
                     }
                     self.ev(GameEvent::Tracer { a: from, b: to, color: 0xffc66a, life: 0.05 });
-                    self.ev(GameEvent::Sound(Snd::EShot { dist: d, big }));
+                    self.ev(GameEvent::Sound(Snd::EShot { dist: d, big, at: from }));
                     self.burst(from, 0xffd27a, 2, 2.0, 0.08);
                 }
                 AiEvent::DroneFire { from, vel, dmg, heavy } => self.shots.push(Shot { pos: from, vel, life: 5.0, dmg, from, heavy }),
-                AiEvent::DroneSfx { pos, boss } => self.ev(GameEvent::Sound(if boss { Snd::Boss } else { Snd::Enemy { dist: pos.distance(t.body) } })),
+                AiEvent::DroneSfx { pos, boss } => self.ev(GameEvent::Sound(if boss { Snd::Boss } else { Snd::Enemy { dist: pos.distance(t.body), at: pos } })),
                 AiEvent::Nade { from, target } => self.nades.push(enemy_nade(from, target)),
                 AiEvent::Alarm { op, pos } => self.raise_alarm(op, pos, level),
                 AiEvent::Spotted => {
@@ -1070,6 +1092,30 @@ impl Game {
     }
 }
 
+/// Normal de la cara de caja que tocó un rayo: se mete un poco adentro y se prueba salir por
+/// cada eje; gana el eje más alineado con el rayo entre los que dejan afuera.
+pub fn surface_normal(world: &World, hit: Vec3, dir: Vec3) -> Vec3 {
+    let inside = hit + dir * 0.03;
+    if world.box_at(inside).is_none() && hit.y > 0.05 {
+        return -dir;
+    }
+    if hit.y <= 0.05 && dir.y < 0.0 {
+        return Vec3::Y;
+    }
+    let mut best: Option<(f32, Vec3)> = None;
+    for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+        let d = dir.dot(axis);
+        if d.abs() < 1e-3 {
+            continue;
+        }
+        let n = -axis * d.signum();
+        if world.box_at(inside + n * 0.08).is_none() && best.is_none_or(|b| d.abs() > b.0) {
+            best = Some((d.abs(), n));
+        }
+    }
+    best.map_or(-dir, |b| b.1)
+}
+
 pub fn drone_color(d: DroneKind) -> u32 {
     match d {
         DroneKind::Kami => 0xff6a2e,
@@ -1082,6 +1128,23 @@ pub fn drone_color(d: DroneKind) -> u32 {
 mod tests {
     use super::*;
     use crate::maps::{MapId, build_level};
+
+    #[test]
+    fn normal_de_la_pared_y_el_piso() {
+        let mut w = World::new(40.0);
+        w.add_box(0.0, 0.0, 4.0, 3.0, 4.0, crate::mat::Mat::Concrete);
+        // desde el este, contra la cara x = +2
+        let o = Vec3::new(10.0, 1.5, 0.3);
+        let d = Vec3::new(-1.0, -0.05, 0.1).normalize();
+        let t = w.ray(o, d, 50.0);
+        assert!(t < 50.0);
+        assert!(surface_normal(&w, o + d * t, d).distance(Vec3::X) < 1e-3);
+        // contra el piso
+        let o = Vec3::new(10.0, 1.5, 10.0);
+        let d = Vec3::new(0.3, -1.0, 0.0).normalize();
+        let t = w.ray(o, d, 50.0);
+        assert!(surface_normal(&w, o + d * t, d).distance(Vec3::Y) < 1e-3);
+    }
 
     fn target(x: f32, z: f32) -> Target {
         Target { pos: Vec3::new(x, 1.6, z), body: Vec3::new(x, 1.1, z), vel: Vec3::ZERO, feet: 0.0, crouch_t: 0.0, evasive: false, light: false }

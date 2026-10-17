@@ -65,10 +65,20 @@ dinámicas, economía, tienda, gadgets, día y noche, Ciudad 2.0, subte, peatone
 - El piso se recorta justo alrededor de las bocas de subte (antes faltaba la baldosa de 8 m entera).
 - Carteles en cola (no se pisan), faroles recalculados solo al moverse, apagón; `ARENA_NO` se lee una vez.
 
+## Sensación arcade y ciudad menos repetida (17/10/2026)
+
+- Hit-stop de 50 ms al matar (70 ms en racha), golpe de campo de visión y sacudida; los soldados se sacuden hacia atrás al recibir un golpe.
+- Rachas en la ciudad: bajas dentro de 4 s suman (+50 por nivel), anunciador "DOBLE BAJA", "TRIPLE BAJA"... con sonido; "RACHA ×n" junto al puntaje.
+- Lista de bajas y puntos a la derecha. Marcas de impacto en paredes y piso (pool de 64, normal calculada en la simulación).
+- Disparos enemigos y drones con paneo estéreo (audio espacial de Bevy usado solo para panear).
+- Fachadas: dos de ladrillo, dos de paneles de hormigón y cuatro de revoque (antes las 8 eran el mismo revoque).
+- Decorado nuevo y solo visual (no consume el RNG de la ciudad): carteles publicitarios y neón en azoteas; pallets
+  en el Puerto, bolardos y macetas en el Centro Financiero, cercos en el Barrio Jardín, tachos y cajones en El Cerro.
+
 ## Lo que sigue
 
-- Sensación arcade: bloom, hit-stop, combo y racha en la ciudad, kill feed, impactos y muertes variadas, audio con paneo.
-- Ciudad menos repetida: texturas de fachada por barrio, carteles y señalética, ventanas de noche, props por barrio.
+- Bloom (necesita HDR en las dos cámaras y ajustarlo mirando la pantalla; queda para cuando se pueda revisar en vivo).
+- Muertes variadas y ragdoll; nombres de calles.
 - Oleadas: cambio de mapa cada 3 oleadas sin reiniciar el juego.
 - Etapa online: servidor autoritativo (`arena_sim` headless), cuentas, ranking validado y cooperativo 2-4.
 - Arte: modelos glTF para reemplazar los procedurales.

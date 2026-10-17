@@ -35,6 +35,9 @@ struct Tex {
     tile: Handle<Image>,
     plaster: Handle<Image>,
     glass: Handle<Image>,
+    brick: Handle<Image>,
+    panel: Handle<Image>,
+    billboards: [Handle<Image>; 4],
     pub sky_city: Handle<Image>,
     pub sky_desert: Handle<Image>,
 }
@@ -76,6 +79,9 @@ impl Looks {
             tile: images.add(textures::tile()),
             plaster: images.add(textures::plaster()),
             glass: images.add(textures::glass()),
+            brick: images.add(textures::brick()),
+            panel: images.add(textures::panel()),
+            billboards: [0, 1, 2, 3].map(|k| images.add(textures::billboard(k))),
             sky_city: images.add(textures::sky(true)),
             sky_desert: images.add(textures::sky(false)),
         };
@@ -133,7 +139,14 @@ impl Looks {
             Mat::Sidewalk => (tex(&t.tile, 0xffffff, 0.92, 0.0), Some(2.4)),
             Mat::InFloor => (tex(&t.tile, 0xa8a092, 0.8, 0.0), Some(1.6)),
             Mat::Roof => (tex(&t.concrete, 0xb9b9b9, 0.95, 0.0), Some(4.0)),
-            Mat::Facade(i) => (tex(&t.plaster, FACADE[i as usize % 8], 0.88, 0.0), Some(3.0)),
+            // fachadas variadas (antes las 8 eran el mismo revoque de otro color): dos de ladrillo,
+            // dos de paneles de hormigón y el resto revoque
+            Mat::Facade(i) => match i % 8 {
+                3 => (tex(&t.brick, 0xf4ece2, 0.9, 0.0), Some(3.0)),
+                6 => (tex(&t.brick, 0xe2cfc0, 0.9, 0.0), Some(3.0)),
+                1 | 5 => (tex(&t.panel, FACADE[i as usize % 8], 0.85, 0.0), Some(3.0)),
+                _ => (tex(&t.plaster, FACADE[i as usize % 8], 0.88, 0.0), Some(3.0)),
+            },
             Mat::Tower(i) => (tex(&t.glass, TOWER[i as usize % 4], 0.3, 0.45), Some(3.4)),
             Mat::Sandbag => (tex(&t.plaster, 0x9a8660, 1.0, 0.0), Some(0.9)),
             Mat::Jersey => (tex(&t.concrete, 0xd6d2c8, 0.9, 0.0), Some(2.0)),
@@ -152,6 +165,9 @@ impl Looks {
             Mat::Statue => (lit(0x7a8a80, 0.45, 0.6), None),
             Mat::Tile => (tex(&t.tile, 0xe8eef0, 0.35, 0.0), Some(0.8)),
             Mat::Gravel => (tex(&t.rock, 0x6a645c, 1.0, 0.0), Some(1.5)),
+            Mat::Billboard(k) => (StandardMaterial { base_color_texture: Some(t.billboards[k as usize % 4].clone()), unlit: true, ..default() }, None),
+            Mat::Neon(k) => (unlit([0xff3df0, 0x3dfcff, 0xffd23d, 0x7dff5a][k as usize % 4]), None),
+            Mat::Bollard => (lit(0x30363a, 0.45, 0.7), None),
         }
     }
 }

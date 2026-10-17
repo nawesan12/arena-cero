@@ -65,6 +65,14 @@ pantalla y en la brújula, el marcador dorado con el número del paso.
   silenciosas y críticos en relación a las bajas). Bono de puntaje según el rango.
 - El progreso (operaciones desbloqueadas y mejor rango) se guarda en `~/.arena-cero` (`campana`, `rangos`).
 
+## Sensación arcade
+
+- **Hit-stop**: al matar, el juego se congela 50 ms (70 ms en racha) y la vista se abre un poco.
+- **Rachas**: en la ciudad, cada baja dentro de 4 s de la anterior suma (+50 por nivel) y aparece "DOBLE BAJA",
+  "TRIPLE BAJA", "CUÁDRUPLE", "IMPARABLE"...; junto al puntaje, "RACHA ×n".
+- **Lista de bajas** a la derecha, **marcas de impacto** en paredes y piso, soldados que se sacuden al recibir un
+  golpe y disparos enemigos con **paneo** (se oyen del lado de donde vienen).
+
 ## Movimiento
 
 Valores de la web, sin cambios: velocidad 7 m/s (10 corriendo), salto 8,2, gravedad 24, doble salto,

@@ -266,6 +266,8 @@ pub enum S {
     Train,
     /// Clic de radio antes de que hable la operadora.
     Radio,
+    /// Racha de bajas.
+    Streak,
 }
 
 fn render(s: S) -> Pcm {
@@ -384,6 +386,11 @@ fn render(s: S) -> Pcm {
             b.tone(0.0, Saw, 392.0, 392.0, 0.7, 0.06);
             b.noise(0.0, 220.0, 0.6, 1.6, 0.35, Low);
         }
+        S::Streak => {
+            b.tone(0.0, Square, 660.0, 660.0, 0.07, 0.07);
+            b.tone(0.07, Square, 880.0, 880.0, 0.07, 0.07);
+            b.tone(0.14, Square, 1320.0, 1320.0, 0.14, 0.08);
+        }
         S::Radio => {
             b.noise(0.0, 2600.0, 1.2, 0.05, 0.25, Band);
             b.tone(0.05, Square, 1650.0, 1650.0, 0.05, 0.05);
@@ -393,10 +400,10 @@ fn render(s: S) -> Pcm {
     b.into_pcm(MASTER, false)
 }
 
-const ALL: [S; 37] = [
+const ALL: [S; 38] = [
     S::Shot(0), S::Shot(1), S::Shot(2), S::Siren, S::Whiz, S::EShot, S::EShotBig, S::AlertBeep, S::Tag, S::Takedown, S::Plant, S::Objective,
     S::Ricochet, S::Hit, S::Crit, S::Hook, S::HookMiss, S::Launch, S::Dash, S::Perk, S::Boss, S::Kill, S::Boom, S::Enemy, S::Hurt, S::Reload,
-    S::Pickup, S::Empty, S::Aim, S::Swap, S::DJump, S::Slide, S::Toss, S::Beep, S::Crash, S::Train, S::Radio,
+    S::Pickup, S::Empty, S::Aim, S::Swap, S::DJump, S::Slide, S::Toss, S::Beep, S::Crash, S::Train, S::Radio, S::Streak,
 ];
 
 /// Motor: loop de 1 s con frecuencias enteras (fase continua al repetir). La velocidad de
@@ -479,7 +486,8 @@ fn music_loop(level: u32) -> Pcm {
 #[derive(Resource)]
 pub struct Sounds {
     map: HashMap<S, Handle<Pcm>>,
-    queue: Vec<(S, f32)>,
+    /// Efecto, volumen y, si tiene, de dónde viene (para el paneo).
+    queue: Vec<(S, f32, Option<Vec3>)>,
     engine: Option<Handle<Pcm>>,
 }
 
@@ -489,10 +497,14 @@ impl Sounds {
     }
     /// Reproduce un efecto (volumen relativo 1 = como en la web).
     pub fn play(&mut self, s: S) {
-        self.queue.push((s, 1.0));
+        self.queue.push((s, 1.0, None));
     }
     pub fn play_vol(&mut self, s: S, v: f32) {
-        self.queue.push((s, v));
+        self.queue.push((s, v, None));
+    }
+    /// Con paneo: suena más del lado de donde viene. El volumen lo decide quien llama.
+    pub fn play_at(&mut self, s: S, v: f32, at: Vec3) {
+        self.queue.push((s, v, Some(at)));
     }
 }
 
@@ -529,11 +541,22 @@ fn setup_audio(mut commands: Commands, mut pcm: ResMut<Assets<Pcm>>) {
     info!("audio sintetizado en {:.0} ms", t0.elapsed().as_secs_f32() * 1000.0);
 }
 
-fn play_queue(mut commands: Commands, mut snd: ResMut<Sounds>) {
+/// Los efectos con posición se ponen a 0,4 m del oyente en la dirección de la fuente: así el
+/// audio espacial solo panea (un oído entre 0,5 y 1) y no atenúa; la distancia ya está en el volumen.
+fn play_queue(mut commands: Commands, mut snd: ResMut<Sounds>, cam: Query<&GlobalTransform, With<SpatialListener>>) {
     let q = std::mem::take(&mut snd.queue);
-    for (s, v) in q {
-        if let Some(h) = snd.map.get(&s) {
-            commands.spawn((AudioPlayer(h.clone()), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(v))));
+    let ear = cam.single().ok().map(|t| t.translation());
+    for (s, v, at) in q {
+        let Some(h) = snd.map.get(&s) else { continue };
+        let settings = PlaybackSettings::DESPAWN.with_volume(Volume::Linear(v));
+        match (at, ear) {
+            (Some(p), Some(e)) if p.distance_squared(e) > 0.25 => {
+                let pos = e + (p - e).normalize() * 0.4;
+                commands.spawn((AudioPlayer(h.clone()), settings.with_spatial(true), Transform::from_translation(pos)));
+            }
+            _ => {
+                commands.spawn((AudioPlayer(h.clone()), settings));
+            }
         }
     }
 }
