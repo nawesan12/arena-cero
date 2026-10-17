@@ -4,8 +4,9 @@
 use arena_sim::game::{Game, Mark};
 use bevy::prelude::*;
 
+/// La partida y su generación (sube cada vez que se reinicia, para que la vista descarte lo viejo).
 #[derive(Resource)]
-pub struct GameRes(pub Game);
+pub struct GameRes(pub Game, pub u32);
 
 /// Lo que la interfaz muestra a partir de los eventos de la partida.
 #[derive(Resource, Default)]
@@ -16,6 +17,9 @@ pub struct UiFeed {
     pub mark_t: f32,
     /// Números de daño: (posición, valor, crítico, edad).
     pub nums: Vec<(Vec3, f32, bool, f32)>,
+    /// "+120 BAJA" debajo de la mira.
+    pub popup: Option<(u32, &'static str)>,
+    pub popup_t: f32,
 }
 
 impl UiFeed {

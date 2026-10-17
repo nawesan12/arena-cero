@@ -648,7 +648,7 @@ impl B<'_> {
         // Arsenal
         {
             let (cx, cz) = (0.0, 132.0);
-            let mut op = Outpost::new(Arsenal, "Arsenal", "Arsenal", "Desbloquea el riel y el lanzagranadas", "Forzar el arsenal", 'R', cx, cz);
+            let mut op = Outpost::new(Arsenal, "Arsenal", "Arsenal", "Desbloquea el lanzagranadas", "Forzar el arsenal", 'R', cx, cz);
             self.outpost_walls(cx, cz, &['n', 'w']);
             self.hall(cx + 2.0, cz + 4.0, 16.0, 11.0, 5.0, Mat::Facade(3), &['n', 'w']);
             op.obj_pos = Some(Vec3::new(cx + 7.0, 1.0, cz + 7.0));

@@ -142,7 +142,8 @@ struct B<'a, 'w, 's> {
 impl B<'_, '_, '_> {
     #[allow(clippy::too_many_arguments)]
     fn bx(&mut self, p: Entity, w: f32, h: f32, d: f32, x: f32, y: f32, z: f32, m: Handle<StandardMaterial>) -> Entity {
-        let e = self.c.spawn((Mesh3d(self.l.cube.clone()), MeshMaterial3d(m), Transform::from_xyz(x, y, z).with_scale(Vec3::new(w, h, d)))).id();
+        // solo el torso proyecta sombra: las piezas chicas no se notan y cuestan una pasada por cascada
+        let e = self.c.spawn((Mesh3d(self.l.cube.clone()), MeshMaterial3d(m), Transform::from_xyz(x, y, z).with_scale(Vec3::new(w, h, d)), NotShadowCaster)).id();
         self.c.entity(p).add_child(e);
         e
     }
@@ -152,7 +153,7 @@ impl B<'_, '_, '_> {
         e
     }
     fn mesh(&mut self, p: Entity, mesh: Handle<Mesh>, m: Handle<StandardMaterial>, t: Transform) -> Entity {
-        let e = self.c.spawn((Mesh3d(mesh), MeshMaterial3d(m), t)).id();
+        let e = self.c.spawn((Mesh3d(mesh), MeshMaterial3d(m), t, NotShadowCaster)).id();
         self.c.entity(p).add_child(e);
         e
     }
@@ -172,6 +173,7 @@ fn soldier(b: &mut B, root: Entity, kind: SoldierKind, rig: &mut Rig) {
         b.bx(lg, 0.23, 0.14, 0.08, 0.0, -0.5, 0.13, armor.clone());
     }
     let torso = b.bx(body, 0.54, 0.62, 0.32, 0.0, 1.3, 0.0, armor.clone());
+    b.c.entity(torso).remove::<NotShadowCaster>();
     b.bx(body, 0.4, 0.3, 0.06, 0.0, 1.36, 0.17, accent.clone());
     b.bx(body, 0.42, 0.46, 0.2, 0.0, 1.32, -0.24, cloth.clone());
     let head = b.grp(body, 0.0, 1.66, 0.0);
@@ -250,7 +252,7 @@ fn turret(b: &mut B, root: Entity, rig: &mut Rig) {
 }
 
 fn spawn_enemy(c: &mut Commands, l: &Look, e: &Enemy) -> Entity {
-    let root = c.spawn((Transform::from_translation(e.pos).with_scale(Vec3::splat(e.scale)), Visibility::default())).id();
+    let root = c.spawn((Transform::from_translation(e.pos).with_scale(Vec3::splat(e.scale)), Visibility::Hidden)).id();
     let mut rig = Rig { last_visor: 255, ..default() };
     let mut b = B { c, l };
     match e.kind {
@@ -280,11 +282,26 @@ fn sync_enemies(
     mut roots: Query<(Entity, &mut Rig)>,
     mut tf: Query<&mut Transform>,
     mut mats: Query<&mut MeshMaterial3d<StandardMaterial>>,
+    mut vis: Query<&mut Visibility, With<Rig>>,
+    mut spot_vis: Query<&mut Visibility, Without<Rig>>,
     mut known: Local<HashMap<u32, Entity>>,
+    mut seen_gen: Local<u32>,
 ) {
     let dt = time.delta_secs();
     let t = time.elapsed_secs();
     let g = &game.0;
+    // partida nueva: los ids vuelven a empezar, se descarta todo lo anterior
+    if *seen_gen != game.1 {
+        *seen_gen = game.1;
+        for (_, ent) in known.drain() {
+            if let Ok((_, rig)) = roots.get(ent) {
+                if let Some(s) = rig.spot {
+                    commands.entity(s).despawn();
+                }
+            }
+            commands.entity(ent).despawn();
+        }
+    }
     let eye = lp.state.eye();
     // nuevos
     for e in &g.enemies {
@@ -310,6 +327,23 @@ fn sync_enemies(
     for e in &g.enemies {
         let Some(&ent) = known.get(&e.id) else { continue };
         let Ok((_, mut rig)) = roots.get_mut(ent) else { continue };
+        // lejos no se dibujan ni se animan (la niebla y el tamaño los vuelven invisibles igual)
+        let far = if e.drone().is_some() { 170.0 } else { 100.0 };
+        let near = e.pos.distance(eye) < far && !crate::off("enemies");
+        if let Ok(mut v) = vis.get_mut(ent) {
+            let want = if near { Visibility::Inherited } else { Visibility::Hidden };
+            if *v != want {
+                *v = want;
+            }
+        }
+        if let Some(sp) = rig.spot {
+            if let Ok(mut v) = spot_vis.get_mut(sp) {
+                *v = if near { Visibility::Inherited } else { Visibility::Hidden };
+            }
+        }
+        if !near {
+            continue;
+        }
         let k = 1.0 - (-30.0 * dt).exp();
         if let Ok(mut rt) = tf.get_mut(ent) {
             let to = e.pos;
@@ -419,8 +453,14 @@ fn sync_enemies(
 }
 
 /// Cadáveres: el mismo modelo de soldado, caído y con el visor apagado.
-fn sync_corpses(mut commands: Commands, game: Res<GameRes>, look: Res<Look>, mut q: Query<(Entity, &CorpseVis, &mut Transform)>, mut known: Local<HashMap<u32, Entity>>) {
+fn sync_corpses(mut commands: Commands, game: Res<GameRes>, look: Res<Look>, mut q: Query<(Entity, &CorpseVis, &mut Transform)>, mut known: Local<HashMap<u32, Entity>>, mut seen_gen: Local<u32>) {
     let g = &game.0;
+    if *seen_gen != game.1 {
+        *seen_gen = game.1;
+        for (_, e) in known.drain() {
+            commands.entity(e).despawn();
+        }
+    }
     for c in &g.corpses {
         if known.contains_key(&c.id) {
             continue;

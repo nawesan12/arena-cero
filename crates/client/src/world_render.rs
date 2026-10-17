@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use std::collections::BTreeMap;
 
 /// Lado de las zonas en que se agrupan las cajas.
-const CHUNK: f32 = 48.0;
+const CHUNK: f32 = 88.0;
 
 #[derive(Resource)]
 pub struct LevelRes(pub Level);
@@ -167,14 +167,26 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
         ));
     }
 
-    // copas de árboles: la misma malla y material para todas (Bevy las dibuja instanciadas)
+    // copas de árboles: fundidas en una malla por zona (cada entidad le cuesta CPU a Bevy)
     if !w.trees.is_empty() {
         let mut ico = Sphere::new(1.0).mesh().ico(1).expect("icosfera");
         ico.duplicate_vertices();
         ico.compute_flat_normals();
-        let ico = meshes.add(ico);
+        let mut zones: BTreeMap<(i32, i32), Mesh> = BTreeMap::new();
         for [x, y, z, s] in &w.trees {
-            commands.spawn((Mesh3d(ico.clone()), MeshMaterial3d(looks.foliage.clone()), Transform::from_xyz(*x, *y, *z).with_scale(Vec3::new(*s, s * 0.9, *s)), LevelEntity));
+            let m = ico.clone().transformed_by(Transform::from_xyz(*x, *y, *z).with_scale(Vec3::new(*s, s * 0.9, *s)));
+            let key = ((x / CHUNK).floor() as i32, (z / CHUNK).floor() as i32);
+            match zones.get_mut(&key) {
+                Some(acc) => {
+                    let _ = acc.merge(&m);
+                }
+                None => {
+                    zones.insert(key, m);
+                }
+            }
+        }
+        for (_, m) in zones {
+            commands.spawn((Mesh3d(meshes.add(m)), MeshMaterial3d(looks.foliage.clone()), Transform::IDENTITY, LevelEntity));
         }
     }
 
@@ -199,7 +211,7 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
     let (sun_c, sun_i) = info.sun;
     let cascades = CascadeShadowConfigBuilder { num_cascades: 4, first_cascade_far_bound: 12.0, maximum_distance: if info.city { 160.0 } else { a * 2.5 }, ..default() }.build();
     commands.spawn((
-        DirectionalLight { color: col(sun_c), illuminance: sun_i * 3000.0, shadow_maps_enabled: true, ..default() },
+        DirectionalLight { color: col(sun_c), illuminance: sun_i * 3000.0, shadow_maps_enabled: !crate::off("shadows"), ..default() },
         Transform::from_translation(level.sun_pos()).looking_at(Vec3::ZERO, Vec3::Y),
         cascades,
         LevelEntity,

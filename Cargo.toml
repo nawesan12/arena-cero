@@ -17,6 +17,18 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
+# la simulación (IA, colisiones) también optimizada en desarrollo
+[profile.dev.package.arena_sim]
+opt-level = 3
+
+# para jugar: optimizado y sin chequeos de depuración (compila rápido de nuevo tras el primer build)
 [profile.release]
+codegen-units = 16
+incremental = true
+
+# para distribuir: más lento de compilar, un poco más rápido de correr
+[profile.dist]
+inherits = "release"
 lto = "thin"
 codegen-units = 1
+incremental = false

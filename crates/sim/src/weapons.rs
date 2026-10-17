@@ -110,7 +110,7 @@ pub struct Arsenal {
     pub nades: u32,
     pub max_nades: u32,
     pub nade_cd: f32,
-    /// En la ciudad el riel y el lanzagranadas arrancan bloqueados.
+    /// En la ciudad el lanzagranadas arranca bloqueado (en la web también el riel; ahora el riel va desde el principio).
     pub unlocked: [bool; 4],
     pub mag_mul: f32,
     pub reload_mul: f32,
@@ -133,7 +133,7 @@ impl Arsenal {
             nades: 2,
             max_nades: 3,
             nade_cd: 0.0,
-            unlocked: if city { [true, true, false, false] } else { [true; 4] },
+            unlocked: if city { [true, true, true, false] } else { [true; 4] },
             mag_mul: 1.0,
             reload_mul: 1.0,
             dmg_mul: 1.0,
@@ -431,15 +431,17 @@ mod tests {
     }
 
     #[test]
-    fn en_la_ciudad_el_riel_arranca_bloqueado() {
+    fn en_la_ciudad_el_lanzagranadas_arranca_bloqueado() {
         let mut a = Arsenal::new(true);
         let mut p = PlayerState::new(0.0, 0.0);
-        let ev = tick(&mut a, WeaponInput { select: Some(2), ..Default::default() }, &mut p, 1);
+        let ev = tick(&mut a, WeaponInput { select: Some(3), ..Default::default() }, &mut p, 1);
         assert!(ev.contains(&WeaponEvent::Locked));
         assert_eq!(a.w, 0);
-        // la rueda saltea las bloqueadas
-        tick(&mut a, WeaponInput { cycle: -1, ..Default::default() }, &mut p, 1);
-        assert_eq!(a.w, 1);
+        // el riel sí está; la rueda hacia atrás saltea el lanzagranadas
+        tick(&mut a, WeaponInput { select: Some(2), ..Default::default() }, &mut p, 30);
+        assert_eq!(a.w, 2);
+        tick(&mut a, WeaponInput { cycle: 1, ..Default::default() }, &mut p, 1);
+        assert_eq!(a.w, 0);
     }
 
     #[test]

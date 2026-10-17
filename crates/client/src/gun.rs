@@ -7,7 +7,7 @@ use crate::player::{LocalPlayer, Look, MainCamera};
 use arena_sim::weapons::WEAPONS;
 use bevy::camera::visibility::RenderLayers;
 use bevy::core_pipeline::tonemapping::Tonemapping;
-use bevy::light::{GeneratedEnvironmentMapLight, NotShadowCaster};
+use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 
 pub const GUN_FOV: f32 = 60.0;
@@ -56,7 +56,6 @@ fn spawn_gun(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats:
         Camera { order: 1, clear_color: ClearColorConfig::None, ..default() },
         Projection::from(PerspectiveProjection { fov: GUN_FOV.to_radians(), near: 0.01, far: 10.0, ..default() }),
         Tonemapping::None,
-        GeneratedEnvironmentMapLight { environment_map: images.add(gunmodels::env_cubemap()), intensity: 900.0, ..default() },
         layer.clone(),
         GunCamera,
     ));
@@ -65,14 +64,8 @@ fn spawn_gun(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats:
         commands.spawn((DirectionalLight { color, illuminance: lux, ..default() }, Transform::from_translation(pos).looking_at(Vec3::ZERO, Vec3::Y), layer.clone()));
     }
     let gm = Gm::new(&mut mats, &mut images);
-    let root = commands.spawn((Transform::from_translation(GUN_BASE), Visibility::default(), layer.clone())).id();
-    let mut kit = Kit {
-        cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
-        cyl: meshes.add(Cylinder::new(1.0, 1.0).mesh().resolution(20)),
-        tube: meshes.add(gunmodels::open_tube()),
-        cmd: &mut commands,
-        meshes: &mut meshes,
-    };
+    let root = commands.spawn((Transform::from_translation(GUN_BASE), if crate::off("gun") { Visibility::Hidden } else { Visibility::default() }, layer.clone())).id();
+    let mut kit = Kit::new(&mut commands, &mut meshes);
     let builders: [fn(&mut Kit, Entity, &Gm) -> Parts; 4] = [gunmodels::rifle, gunmodels::shotgun, gunmodels::rail, gunmodels::launcher];
     let mut models = [Entity::PLACEHOLDER; 4];
     let mut parts: [Parts; 4] = Default::default();
@@ -82,6 +75,7 @@ fn spawn_gun(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats:
         parts[i] = b(&mut kit, g, &gm);
         models[i] = g;
     }
+    kit.finish();
     let glow = mats.add(StandardMaterial { base_color_texture: Some(images.add(gunmodels::glow_tex())), unlit: true, alpha_mode: AlphaMode::Add, ..default() });
     let flash = commands.spawn((Mesh3d(meshes.add(Rectangle::new(0.42, 0.42))), MeshMaterial3d(glow), Transform::default(), Visibility::Hidden, layer.clone(), NotShadowCaster)).id();
     let flash_light = commands.spawn((PointLight { intensity: 0.0, range: 2.0, ..default() }, Transform::default(), layer.clone())).id();

@@ -10,6 +10,8 @@ pub mod game;
 pub mod maps;
 pub mod mat;
 pub mod nav;
+pub mod objectives;
+pub mod perks;
 pub mod player;
 pub mod rng;
 pub mod weapons;

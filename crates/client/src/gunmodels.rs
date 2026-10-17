@@ -5,7 +5,6 @@
 //! Convención de la web: +X derecha, +Y arriba, −Z hacia adelante (el caño apunta a −Z).
 //! Los perfiles `ex` se dibujan en (u = hacia adelante, v = arriba) y se extruyen a lo ancho.
 
-use crate::textures::hex;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
@@ -43,17 +42,17 @@ fn flat(c: u32) -> StandardMaterial {
 impl Gm {
     pub fn new(mats: &mut Assets<StandardMaterial>, images: &mut Assets<Image>) -> Self {
         Self {
-            metal: mats.add(pbr(0x353c42, 0.85, 0.55)),
-            steel: mats.add(pbr(0x5b646b, 1.0, 0.32)),
+            metal: mats.add(pbr(0x3d454c, 0.35, 0.5)),
+            steel: mats.add(pbr(0x6b747b, 0.5, 0.35)),
             black: mats.add(pbr(0x07090a, 0.3, 0.8)),
             fde: mats.add(pbr(0x5c4b37, 0.05, 0.72)),
             rubber: mats.add(pbr(0x111314, 0.0, 0.95)),
-            perf: mats.add(StandardMaterial { double_sided: true, cull_mode: None, ..pbr(0x2a3035, 0.8, 0.45) }),
-            dark: mats.add(StandardMaterial { double_sided: true, cull_mode: None, ..pbr(0x15181b, 0.7, 0.45) }),
+            perf: mats.add(StandardMaterial { double_sided: true, cull_mode: None, ..pbr(0x2a3035, 0.35, 0.45) }),
+            dark: mats.add(StandardMaterial { double_sided: true, cull_mode: None, ..pbr(0x1a1e22, 0.3, 0.5) }),
             poly: mats.add(pbr(0x1c2023, 0.05, 0.75)),
-            brass: mats.add(pbr(0xb8913a, 1.0, 0.3)),
+            brass: mats.add(pbr(0xb8913a, 0.6, 0.35)),
             shell: mats.add(pbr(0x9a1e24, 0.2, 0.5)),
-            glass: mats.add(StandardMaterial { alpha_mode: AlphaMode::Blend, base_color: crate::world_render::col(0x9fe9ff).with_alpha(0.16), metallic: 1.0, perceptual_roughness: 0.0, ..default() }),
+            glass: mats.add(StandardMaterial { alpha_mode: AlphaMode::Blend, base_color: crate::world_render::col(0x9fe9ff).with_alpha(0.16), metallic: 0.0, perceptual_roughness: 0.1, ..default() }),
             amber: mats.add(flat(0xffb02e)),
             red: mats.add(flat(0xff3d5a)),
             cyan: mats.add(flat(0x5fd8ff)),
@@ -79,56 +78,6 @@ fn reticle_tex() -> Image {
         }
     }
     crate::textures::to_image(s, px, true, false)
-}
-
-/// Cubemap de un depósito con tiras de luz, para los reflejos del metal (como `makeEnv` de la web).
-pub fn env_cubemap() -> Image {
-    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension};
-    let s = 64usize;
-    let stops = [(0.0, hex(0xd9e4ea)), (0.3, hex(0x55636c)), (0.55, hex(0x20282d)), (1.0, hex(0x0a0d0f))];
-    let mut data = Vec::with_capacity(s * s * 6 * 4);
-    // orden de caras: +X, −X, +Y, −Y, +Z, −Z
-    for face in 0..6 {
-        for y in 0..s {
-            for x in 0..s {
-                let (a, b) = ((x as f32 + 0.5) / s as f32 * 2.0 - 1.0, (y as f32 + 0.5) / s as f32 * 2.0 - 1.0);
-                let d = match face {
-                    0 => Vec3::new(1.0, -b, -a),
-                    1 => Vec3::new(-1.0, -b, a),
-                    2 => Vec3::new(a, 1.0, b),
-                    3 => Vec3::new(a, -1.0, -b),
-                    4 => Vec3::new(a, -b, 1.0),
-                    _ => Vec3::new(-a, -b, -1.0),
-                }
-                .normalize();
-                let t = d.y.clamp(-1.0, 1.0).acos() / PI;
-                let az = d.z.atan2(d.x) / TAU + 0.5;
-                let mut c = sample(&stops, t);
-                if (t - 0.19).abs() < 0.012 && (az * 4.0).fract() < 0.53 {
-                    c = hex(0xffd08a);
-                }
-                if (t - 0.52).abs() < 0.004 {
-                    c = hex(0xffb02e);
-                }
-                let e = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
-                data.extend_from_slice(&[e(c.0), e(c.1), e(c.2), 255]);
-            }
-        }
-    }
-    let mut img = Image::new(Extent3d { width: s as u32, height: s as u32, depth_or_array_layers: 6 }, TextureDimension::D2, data, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
-    img.texture_view_descriptor = Some(TextureViewDescriptor { dimension: Some(TextureViewDimension::Cube), ..default() });
-    img
-}
-
-fn sample(stops: &[(f32, crate::textures::C)], t: f32) -> crate::textures::C {
-    for w in stops.windows(2) {
-        let ((a, ca), (b, cb)) = (w[0], w[1]);
-        if t <= b {
-            let k = ((t - a) / (b - a)).clamp(0.0, 1.0);
-            return crate::textures::C(ca.0 + (cb.0 - ca.0) * k, ca.1 + (cb.1 - ca.1) * k, ca.2 + (cb.2 - ca.2) * k, 1.0);
-        }
-    }
-    stops[stops.len() - 1].1
 }
 
 /* ---------- geometría ---------- */
@@ -237,21 +186,44 @@ fn extrude(outer: &[[f32; 2]], holes: &[Vec<[f32; 2]>], depth: f32, to3: impl Fn
     b.mesh()
 }
 
-/// Constructor de un arma: agrega piezas como hijos de `root`.
+/// Constructor de un arma. Las piezas se juntan y al final (`finish`) se funden en una malla por
+/// grupo y material: un arma pasa de ~100 dibujos a ~10. Lo que se anima por separado (cargador,
+/// corredera, tambor, bobinas) va en su propio grupo o se crea aparte con `t_live`.
 pub struct Kit<'a, 'w, 's> {
     pub cmd: &'a mut Commands<'w, 's>,
     pub meshes: &'a mut Assets<Mesh>,
-    pub cube: Handle<Mesh>,
-    pub cyl: Handle<Mesh>,
-    pub tube: Handle<Mesh>,
+    pub cube: Mesh,
+    pub cyl: Mesh,
+    pub tube: Mesh,
+    pieces: Vec<(Entity, Handle<StandardMaterial>, Mesh)>,
 }
 
-impl Kit<'_, '_, '_> {
-    fn spawn(&mut self, parent: Entity, mesh: Handle<Mesh>, m: &Handle<StandardMaterial>, t: Transform) -> Entity {
-        let e = self.cmd.spawn((Mesh3d(mesh), MeshMaterial3d(m.clone()), t, bevy::camera::visibility::RenderLayers::layer(GUN_LAYER), bevy::light::NotShadowCaster)).id();
-        self.cmd.entity(parent).add_child(e);
-        e
+impl<'a, 'w, 's> Kit<'a, 'w, 's> {
+    pub fn new(cmd: &'a mut Commands<'w, 's>, meshes: &'a mut Assets<Mesh>) -> Self {
+        Self { cmd, meshes, cube: Cuboid::new(1.0, 1.0, 1.0).mesh().build(), cyl: Cylinder::new(1.0, 1.0).mesh().resolution(20).build(), tube: open_tube(), pieces: Vec::new() }
     }
+
+    fn spawn(&mut self, parent: Entity, mesh: Mesh, m: &Handle<StandardMaterial>, t: Transform) {
+        self.pieces.push((parent, m.clone(), mesh.transformed_by(t)));
+    }
+
+    /// Funde las piezas acumuladas y crea las entidades.
+    pub fn finish(&mut self) {
+        let mut groups: Vec<(Entity, Handle<StandardMaterial>, Mesh)> = Vec::new();
+        for (p, m, mesh) in self.pieces.drain(..) {
+            match groups.iter_mut().find(|g| g.0 == p && g.1 == m) {
+                Some(g) => {
+                    let _ = g.2.merge(&mesh);
+                }
+                None => groups.push((p, m, mesh)),
+            }
+        }
+        for (p, m, mesh) in groups {
+            let e = self.cmd.spawn((Mesh3d(self.meshes.add(mesh)), MeshMaterial3d(m), Transform::IDENTITY, bevy::camera::visibility::RenderLayers::layer(GUN_LAYER), bevy::light::NotShadowCaster)).id();
+            self.cmd.entity(p).add_child(e);
+        }
+    }
+
     pub fn group(&mut self, parent: Entity, pos: Vec3) -> Entity {
         let e = self.cmd.spawn((Transform::from_translation(pos), Visibility::default())).id();
         self.cmd.entity(parent).add_child(e);
@@ -259,66 +231,80 @@ impl Kit<'_, '_, '_> {
     }
     /// Caja (`B`).
     #[allow(clippy::too_many_arguments)]
-    pub fn b(&mut self, p: Entity, w: f32, h: f32, d: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) -> Entity {
+    pub fn b(&mut self, p: Entity, w: f32, h: f32, d: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) {
         let c = self.cube.clone();
-        self.spawn(p, c, m, Transform::from_xyz(x, y, z).with_scale(Vec3::new(w, h, d)))
+        self.spawn(p, c, m, Transform::from_xyz(x, y, z).with_scale(Vec3::new(w, h, d)));
+    }
+    /// Caja girada sobre Z (aletas del tambor).
+    #[allow(clippy::too_many_arguments)]
+    pub fn b_rot(&mut self, p: Entity, w: f32, h: f32, d: f32, x: f32, y: f32, z: f32, rz: f32, m: &Handle<StandardMaterial>) {
+        let c = self.cube.clone();
+        self.spawn(p, c, m, Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_z(rz)).with_scale(Vec3::new(w, h, d)));
     }
     /// Cilindro con el eje en Z (`C`).
     #[allow(clippy::too_many_arguments)]
-    pub fn c(&mut self, p: Entity, r: f32, len: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) -> Entity {
+    pub fn c(&mut self, p: Entity, r: f32, len: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) {
         let c = self.cyl.clone();
-        self.spawn(p, c, m, Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_x(FRAC_PI_2)).with_scale(Vec3::new(r, len, r)))
+        self.spawn(p, c, m, Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_x(FRAC_PI_2)).with_scale(Vec3::new(r, len, r)));
     }
     /// Cilindro vertical (`CY`).
     #[allow(clippy::too_many_arguments)]
-    pub fn cy(&mut self, p: Entity, r: f32, len: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) -> Entity {
+    pub fn cy(&mut self, p: Entity, r: f32, len: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) {
         let c = self.cyl.clone();
-        self.spawn(p, c, m, Transform::from_xyz(x, y, z).with_scale(Vec3::new(r, len, r)))
+        self.spawn(p, c, m, Transform::from_xyz(x, y, z).with_scale(Vec3::new(r, len, r)));
     }
     /// Cilindro con el eje en X.
     #[allow(clippy::too_many_arguments)]
-    pub fn cx(&mut self, p: Entity, r: f32, len: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) -> Entity {
+    pub fn cx(&mut self, p: Entity, r: f32, len: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) {
         let c = self.cyl.clone();
-        self.spawn(p, c, m, Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_z(FRAC_PI_2)).with_scale(Vec3::new(r, len, r)))
+        self.spawn(p, c, m, Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_z(FRAC_PI_2)).with_scale(Vec3::new(r, len, r)));
     }
     /// Tubo abierto con el eje en Z (`OT`).
     #[allow(clippy::too_many_arguments)]
-    pub fn ot(&mut self, p: Entity, r: f32, len: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) -> Entity {
+    pub fn ot(&mut self, p: Entity, r: f32, len: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) {
         let c = self.tube.clone();
-        self.spawn(p, c, m, Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_x(FRAC_PI_2)).with_scale(Vec3::new(r, len, r)))
+        self.spawn(p, c, m, Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_x(FRAC_PI_2)).with_scale(Vec3::new(r, len, r)));
     }
     /// Toro en el plano XY (`T`).
     #[allow(clippy::too_many_arguments)]
-    pub fn t(&mut self, p: Entity, r: f32, tube: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) -> Entity {
-        let mesh = self.meshes.add(Torus::new(r - tube, r + tube).mesh().minor_resolution(8).major_resolution(24));
-        self.spawn(p, mesh, m, Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_x(FRAC_PI_2)))
+    pub fn t(&mut self, p: Entity, r: f32, tube: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) {
+        let mesh = Torus::new(r - tube, r + tube).mesh().minor_resolution(8).major_resolution(24).build();
+        self.spawn(p, mesh, m, Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_x(FRAC_PI_2)));
     }
-    pub fn sphere(&mut self, p: Entity, r: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) -> Entity {
-        let mesh = self.meshes.add(Sphere::new(r).mesh().uv(10, 8));
-        self.spawn(p, mesh, m, Transform::from_xyz(x, y, z))
+    /// Toro que se anima solo (bobinas del riel): entidad propia.
+    #[allow(clippy::too_many_arguments)]
+    pub fn t_live(&mut self, p: Entity, r: f32, tube: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) -> Entity {
+        let mesh = self.meshes.add(Torus::new(r - tube, r + tube).mesh().minor_resolution(8).major_resolution(24));
+        let e = self.cmd.spawn((Mesh3d(mesh), MeshMaterial3d(m.clone()), Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_x(FRAC_PI_2)), bevy::camera::visibility::RenderLayers::layer(GUN_LAYER), bevy::light::NotShadowCaster)).id();
+        self.cmd.entity(p).add_child(e);
+        e
+    }
+    pub fn sphere(&mut self, p: Entity, r: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) {
+        let mesh = Sphere::new(r).mesh().uv(10, 8);
+        self.spawn(p, mesh, m, Transform::from_xyz(x, y, z));
     }
     /// Perfil lateral extruido a lo ancho (`EX`). El bisel de la web se omite: el ancho total es el mismo.
     #[allow(clippy::too_many_arguments)]
-    pub fn ex(&mut self, p: Entity, pts: &[P], width: f32, x: f32, m: &Handle<StandardMaterial>, holes: &[&[P]]) -> Entity {
+    pub fn ex(&mut self, p: Entity, pts: &[P], width: f32, x: f32, m: &Handle<StandardMaterial>, holes: &[&[P]]) {
         let outer = trace(pts);
         let holes: Vec<_> = holes.iter().map(|h| trace(h)).collect();
         // (u adelante, v arriba, w ancho) → (x = w, y = v, z = −u)
-        let mesh = self.meshes.add(extrude(&outer, &holes, width, |u, v, w| Vec3::new(w, v, -u)));
-        self.spawn(p, mesh, m, Transform::from_xyz(x, 0.0, 0.0))
+        let mesh = extrude(&outer, &holes, width, |u, v, w| Vec3::new(w, v, -u));
+        self.spawn(p, mesh, m, Transform::from_xyz(x, 0.0, 0.0));
     }
     /// Marco visto de frente con ventana, extruido hacia atrás (`FRAME`): capuchas de mira.
     #[allow(clippy::too_many_arguments)]
-    pub fn frame(&mut self, p: Entity, cy: f32, w: f32, h: f32, hw: f32, hh: f32, depth: f32, z: f32, m: &Handle<StandardMaterial>) -> Entity {
+    pub fn frame(&mut self, p: Entity, cy: f32, w: f32, h: f32, hw: f32, hh: f32, depth: f32, z: f32, m: &Handle<StandardMaterial>) {
         let rect = |cx: f32, cy: f32, w: f32, h: f32, r: f32| {
             let (x, y) = (cx - w / 2.0, cy - h / 2.0);
             trace(&[L(x + r, y), L(x + w - r, y), Q(x + w, y, x + w, y + r), L(x + w, y + h - r), Q(x + w, y + h, x + w - r, y + h), L(x + r, y + h), Q(x, y + h, x, y + h - r), L(x, y + r), Q(x, y, x + r, y)])
         };
-        let mesh = self.meshes.add(extrude(&rect(0.0, cy, w, h, 0.008), &[rect(0.0, cy + 0.002, hw, hh, 0.005)], depth, |x, y, zz| Vec3::new(x, y, zz)));
-        self.spawn(p, mesh, m, Transform::from_xyz(0.0, 0.0, z))
+        let mesh = extrude(&rect(0.0, cy, w, h, 0.008), &[rect(0.0, cy + 0.002, hw, hh, 0.005)], depth, |x, y, zz| Vec3::new(x, y, zz));
+        self.spawn(p, mesh, m, Transform::from_xyz(0.0, 0.0, z));
     }
-    pub fn quad(&mut self, p: Entity, w: f32, h: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) -> Entity {
-        let mesh = self.meshes.add(Rectangle::new(w, h));
-        self.spawn(p, mesh, m, Transform::from_xyz(x, y, z))
+    pub fn quad(&mut self, p: Entity, w: f32, h: f32, x: f32, y: f32, z: f32, m: &Handle<StandardMaterial>) {
+        let mesh = Rectangle::new(w, h).mesh().build();
+        self.spawn(p, mesh, m, Transform::from_xyz(x, y, z));
     }
 }
 
@@ -453,7 +439,7 @@ pub fn rail(k: &mut Kit, g: Entity, m: &Gm) -> Parts {
         k.b(g, 0.003, 0.008, 0.44, sx * 0.021, 0.0, -0.49, &m.cyan);
     }
     for i in 0..6 {
-        let e = k.t(g, 0.044, 0.007, 0.0, 0.0, -0.33 - i as f32 * 0.066, &m.cyan);
+        let e = k.t_live(g, 0.044, 0.007, 0.0, 0.0, -0.33 - i as f32 * 0.066, &m.cyan);
         r.coils.push(e);
     }
     k.b(g, 0.078, 0.018, 0.022, 0.0, 0.0, -0.71, &m.dark);
@@ -506,8 +492,7 @@ pub fn launcher(k: &mut Kit, g: Entity, m: &Gm) -> Parts {
         let a2 = a + PI / 6.0;
         k.c(drum, 0.017, 0.124, a.cos() * 0.044, a.sin() * 0.044, 0.0, &m.black);
         k.c(drum, 0.015, 0.012, a.cos() * 0.044, a.sin() * 0.044, -0.058, &m.amber);
-        let fl = k.b(drum, 0.014, 0.01, 0.1, a2.cos() * 0.068, a2.sin() * 0.068, 0.0, &m.black);
-        k.cmd.entity(fl).insert(Transform::from_xyz(a2.cos() * 0.068, a2.sin() * 0.068, 0.0).with_rotation(Quat::from_rotation_z(a2)).with_scale(Vec3::new(0.014, 0.01, 0.1)));
+        k.b_rot(drum, 0.014, 0.01, 0.1, a2.cos() * 0.068, a2.sin() * 0.068, 0.0, a2, &m.black);
     }
     r.drum = Some(drum);
     k.ex(g, &[L(0.24, -0.022), L(0.3, -0.022), L(0.292, -0.135), L(0.252, -0.135)], 0.036, 0.0, &m.poly, &[]);

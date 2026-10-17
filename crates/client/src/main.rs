@@ -11,10 +11,13 @@ mod game;
 mod gun;
 mod gunmodels;
 mod hud;
-mod hud_combat;
+mod markers;
 mod materials;
+mod perks;
 mod player;
 mod quality;
+mod render_scale;
+mod tacmap;
 mod textures;
 mod world_render;
 
@@ -60,17 +63,22 @@ fn parse_args() -> Args {
     a
 }
 
+/// `ARENA_NO=gun,enemies,ai,env,shadows`: apaga partes para medir cuánto cuesta cada una.
+pub fn off(k: &str) -> bool {
+    std::env::var("ARENA_NO").is_ok_and(|v| v.split(',').any(|x| x == k))
+}
+
 fn main() {
     let args = parse_args();
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window { title: "Arena Cero".into(), present_mode: PresentMode::AutoVsync, resolution: (1440, 900).into(), ..default() }),
+            primary_window: Some(Window { title: "Arena Cero".into(), present_mode: if std::env::var_os("ARENA_BENCH").is_some() { PresentMode::AutoNoVsync } else { PresentMode::AutoVsync }, resolution: (1440, 900).into(), ..default() }),
             ..default()
         }))
         .insert_resource(args)
-        .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin, gun::GunPlugin, fx::FxPlugin, audio::AudioSynthPlugin, enemies_view::EnemiesViewPlugin, hud_combat::HudCombatPlugin))
+        .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin, render_scale::RenderScalePlugin, gun::GunPlugin, fx::FxPlugin, audio::AudioSynthPlugin, enemies_view::EnemiesViewPlugin, markers::MarkersPlugin, perks::PerksPlugin, tacmap::TacMapPlugin))
         .add_systems(PreStartup, setup)
-        .add_systems(Update, (world_render::follow_sky, world_render::animate_lava, auto_shot))
+        .add_systems(Update, (world_render::follow_sky, world_render::animate_lava, auto_shot, bench))
         .run();
 }
 
@@ -92,7 +100,7 @@ fn setup(mut commands: Commands, args: Res<Args>, mut quality: ResMut<quality::Q
     quality.dirty = true;
     // en modo captura no se toma el mouse: la ventana puede quedar debajo de otras
     settings.input = args.shot.is_none();
-    commands.insert_resource(game::GameRes(arena_sim::game::Game::new(&mut level, 7)));
+    commands.insert_resource(game::GameRes(arena_sim::game::Game::new(&mut level, 7), 0));
     commands.init_resource::<game::UiFeed>();
     let res = world_render::LevelRes(level);
     player::spawn_player(&mut commands, &res, args.at, args.weapon);
@@ -113,7 +121,24 @@ fn auto_shot(mut commands: Commands, args: Res<Args>, time: Res<Time>, mut frame
             commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path.replace(".png", "-b.png")));
         }
         *done = 2;
-    } else if *done == 2 && *frames > 260 {
+    } else if *done == 2 && *frames > 260 && std::env::var_os("ARENA_BENCH").is_none() {
+        exit.write(AppExit::Success);
+    }
+}
+
+/// Con `ARENA_BENCH=1`: mide el tiempo medio por cuadro entre los 4 y los 10 s y lo imprime.
+fn bench(time: Res<Time<Real>>, mut acc: Local<(u32, f64, bool)>, ents: Query<()>, meshes: Query<(), With<Mesh3d>>, nodes: Query<(), With<Node>>, mut exit: MessageWriter<AppExit>) {
+    if std::env::var_os("ARENA_BENCH").is_none() {
+        return;
+    }
+    let t = time.elapsed_secs_f64();
+    if t > 4.0 && t < 10.0 {
+        acc.0 += 1;
+        acc.1 += time.delta_secs_f64();
+    } else if t >= 10.0 && !acc.2 {
+        acc.2 = true;
+        let ms = acc.1 / f64::from(acc.0.max(1)) * 1000.0;
+        println!("BENCH {:.2} ms/cuadro ({:.0} FPS) · {} entidades ({} mallas, {} nodos de UI)", ms, 1000.0 / ms, ents.iter().count(), meshes.iter().count(), nodes.iter().count());
         exit.write(AppExit::Success);
     }
 }

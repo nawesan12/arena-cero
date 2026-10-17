@@ -32,6 +32,11 @@ pub enum Snd {
     Crit,
     Ricochet,
     Pickup,
+    Plant,
+    Takedown,
+    Objective,
+    Beep,
+    Tag,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -55,6 +60,18 @@ pub enum GameEvent {
     Num { pos: Vec3, value: f32, crit: bool },
     Heal(f32),
     Overdrive,
+    /// Reabastecimiento: integridad, munición y granadas al máximo.
+    Refill,
+    /// Arsenal forzado: todas las armas desbloqueadas y llenas.
+    Unlock,
+    /// Distrito liberado.
+    Victory { bonus: u32 },
+    /// Elegir una mejora.
+    OfferPerk,
+    /// Oleada despejada (+1 granada).
+    WaveCleared,
+    /// Puntos ganados (para el "+120" junto a la mira).
+    Score { points: u32, label: &'static str },
 }
 
 #[derive(Clone, Debug)]
@@ -89,6 +106,7 @@ pub struct CityRun {
     pub reinforce_t: f32,
     pub stealth_kills: u32,
     turret_cols: Vec<(u32, ColliderId)>,
+    pub obj: crate::objectives::ObjState,
 }
 
 pub struct Game {
@@ -171,7 +189,7 @@ impl Game {
     /* ---------- ciudad ---------- */
 
     fn init_city(&mut self, c: CityData, world: &mut World) {
-        let mut run = CityRun { ops: vec![OpState::default(); c.outposts.len()], powered: true, antenna: true, drones: true, intel: false, armory: false, lives: 3, time: 0.0, done: Vec::new(), reinforce_t: 20.0, stealth_kills: 0, turret_cols: Vec::new() };
+        let mut run = CityRun { ops: vec![OpState::default(); c.outposts.len()], powered: true, antenna: true, drones: true, intel: false, armory: false, lives: 3, time: 0.0, done: Vec::new(), reinforce_t: 20.0, stealth_kills: 0, turret_cols: Vec::new(), obj: Default::default() };
         for (oi, op) in c.outposts.iter().enumerate() {
             self.nav.push(NavGrid::build(world, op.cx, op.cz, 36.0, 0.16));
             for u in &op.units {
@@ -227,6 +245,10 @@ impl Game {
             let full = level.city.as_ref().map_or("", |c| c.outposts[op].full).to_uppercase();
             self.banner(format!("ALERTA · {full}"), if antenna { "Pidieron refuerzos por radio" } else { "La antena está caída: no llegan refuerzos" });
         }
+    }
+
+    pub(crate) fn alarm_public(&mut self, op: usize, known: Option<Vec3>, level: &Level) {
+        self.raise_alarm(op, known, level);
     }
 
     /// Ruido (disparos, explosiones): los soldados tranquilos que lo oyen van a buscar.
@@ -435,7 +457,9 @@ impl Game {
         match e.kind {
             Kind::Soldier(sk) => {
                 let stealth = e.op.and_then(|o| self.city.as_ref().map(|c| c.ops[o].alarm <= 0.0)).unwrap_or(false);
-                self.score += e.value + if stealth { 60 } else { 0 };
+                let pts = e.value + if stealth { 60 } else { 0 };
+                self.score += pts;
+                self.events.push(GameEvent::Score { points: pts, label: if stealth { "BAJA SILENCIOSA" } else if sk == SoldierKind::Commander { "COMANDANTE" } else { "BAJA" } });
                 if stealth {
                     if let Some(c) = self.city.as_mut() {
                         c.stealth_kills += 1;
@@ -446,9 +470,16 @@ impl Game {
                 if self.corpses.len() > 30 {
                     self.corpses.remove(0);
                 }
+                if sk == SoldierKind::Commander {
+                    if let Some(op) = e.op {
+                        self.enemies[i].hp = 0.0;
+                        self.complete_objective(op, level);
+                    }
+                }
             }
             Kind::Turret => {
                 self.score += e.value;
+                self.events.push(GameEvent::Score { points: e.value, label: "TORRETA" });
                 if let Some(c) = self.city.as_mut() {
                     if let Some(k) = c.turret_cols.iter().position(|t| t.0 == e.id) {
                         let (_, col) = c.turret_cols.remove(k);
@@ -468,6 +499,7 @@ impl Game {
                 self.combo = if self.combo_t > 0.0 { (self.combo + 1).min(5) } else { 1 };
                 self.combo_t = 3.0;
                 self.score += e.value * self.combo;
+                self.events.push(GameEvent::Score { points: e.value * self.combo, label: if self.combo > 1 { "COMBO" } else { "DRON" } });
             }
         }
         self.enemies[i].hp = 0.0;
@@ -736,7 +768,9 @@ impl Game {
                     let bonus = self.wave * 250;
                     self.score += bonus;
                     self.ev(GameEvent::Heal(20.0));
+                    self.ev(GameEvent::WaveCleared);
                     self.banner("DESPEJADO", format!("+{bonus} bonus · +1 granada"));
+                    self.ev(GameEvent::OfferPerk);
                 }
                 self.intermission = if self.wave > 0 { 3.2 } else { 1.2 };
             }

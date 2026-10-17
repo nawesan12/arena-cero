@@ -3,7 +3,7 @@
 //! F1 baja · F2 media · F3 alta. Se guarda en `~/.arena-cero` entre sesiones (ver `config.rs`).
 
 use crate::player::MainCamera;
-use bevy::light::DirectionalLightShadowMap;
+use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder, DirectionalLightShadowMap};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
@@ -22,14 +22,19 @@ pub struct Preset {
     pub shadow: usize,
     pub far: f32,
     pub msaa: Msaa,
+    /// Escala de resolución respecto de los píxeles lógicos (en Retina, 1 = la mitad de la nativa).
+    pub scale: f32,
+    pub cascades: usize,
+    /// Hasta dónde llegan las sombras.
+    pub shadow_dist: f32,
 }
 
 impl Quality {
     pub fn preset(self) -> Preset {
         match self {
-            Quality::Baja => Preset { fps: 40, shadow: 1024, far: 200.0, msaa: Msaa::Off },
-            Quality::Media => Preset { fps: 60, shadow: 2048, far: 280.0, msaa: Msaa::Sample4 },
-            Quality::Alta => Preset { fps: 120, shadow: 4096, far: 360.0, msaa: Msaa::Sample4 },
+            Quality::Baja => Preset { fps: 40, shadow: 1024, far: 200.0, msaa: Msaa::Off, scale: 0.75, cascades: 2, shadow_dist: 45.0 },
+            Quality::Media => Preset { fps: 60, shadow: 2048, far: 280.0, msaa: Msaa::Sample4, scale: 1.0, cascades: 3, shadow_dist: 80.0 },
+            Quality::Alta => Preset { fps: 120, shadow: 4096, far: 360.0, msaa: Msaa::Sample4, scale: 1.6, cascades: 4, shadow_dist: 150.0 },
         }
     }
     fn name(self) -> &'static str {
@@ -58,7 +63,7 @@ pub struct QualityRes {
 }
 
 fn load() -> Quality {
-    crate::config::get("calidad").and_then(|v| Quality::parse(&v)).unwrap_or(Quality::Media)
+    std::env::var("ARENA_Q").ok().or_else(|| crate::config::get("calidad")).and_then(|v| Quality::parse(&v)).unwrap_or(Quality::Media)
 }
 
 fn save(q: Quality) {
@@ -93,7 +98,7 @@ fn switch_quality(key: Res<ButtonInput<KeyCode>>, mut q: ResMut<QualityRes>) {
     }
 }
 
-fn apply_quality(mut q: ResMut<QualityRes>, mut shadow: ResMut<DirectionalLightShadowMap>, mut cam: Query<(&mut Projection, &mut DistanceFog, &mut Msaa), With<MainCamera>>, mut gun_cam: Query<&mut Msaa, (With<crate::gun::GunCamera>, Without<MainCamera>)>) {
+fn apply_quality(mut q: ResMut<QualityRes>, mut shadow: ResMut<DirectionalLightShadowMap>, mut cam: Query<(&mut Projection, &mut DistanceFog, &mut Msaa), With<MainCamera>>, mut gun_cam: Query<&mut Msaa, (With<crate::gun::GunCamera>, Without<MainCamera>)>, mut suns: Query<(&DirectionalLight, &mut CascadeShadowConfig)>) {
     if !q.dirty {
         return;
     }
@@ -106,6 +111,12 @@ fn apply_quality(mut q: ResMut<QualityRes>, mut shadow: ResMut<DirectionalLightS
     let end = q.fog[1].min(p.far - 10.0);
     fog.falloff = FogFalloff::Linear { start: q.fog[0].min(end * 0.4), end };
     *msaa = p.msaa;
+    // sombras: Bevy las recalcula cada cuadro (la web las calculaba una vez), así que se acortan
+    for (l, mut c) in &mut suns {
+        if l.shadow_maps_enabled {
+            *c = CascadeShadowConfigBuilder { num_cascades: p.cascades, first_cascade_far_bound: (p.shadow_dist * 0.12).max(6.0), maximum_distance: p.shadow_dist, ..default() }.build();
+        }
+    }
     // las dos cámaras dibujan sobre la misma ventana: tienen que usar el mismo antialias
     for mut m in &mut gun_cam {
         *m = p.msaa;
@@ -120,9 +131,9 @@ const IDLE_FPS: u32 = 30;
 fn frame_cap(q: Res<QualityRes>, win: Single<(&Window, &CursorOptions)>, mut last: Local<Option<Instant>>) {
     let (w, cursor) = *win;
     let playing = w.focused && cursor.grab_mode != CursorGrabMode::None;
-    let fps = if playing { q.q.preset().fps } else { IDLE_FPS };
+    let fps = if std::env::var_os("ARENA_BENCH").is_some() { 0 } else if playing { q.q.preset().fps } else { IDLE_FPS };
     let now = Instant::now();
-    {
+    if fps > 0 {
         if let Some(prev) = *last {
             let target = Duration::from_secs_f64(1.0 / f64::from(fps));
             let spent = now - prev;

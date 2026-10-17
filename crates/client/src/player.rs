@@ -5,12 +5,14 @@ use crate::audio::{S, Sounds};
 use crate::fx::Fx;
 use crate::game::{GameRes, UiFeed};
 use crate::audio::MusicLevel;
+use crate::perks::PerkState;
 use crate::gun::GunRig;
 use crate::world_render::LevelRes;
 use arena_sim::player::{BASE_FOV, EYE};
 use arena_sim::rng::Rng;
 use arena_sim::enemies::Target;
 use arena_sim::game::{Game, GameEvent, Mark, Snd};
+use arena_sim::objectives::Actor;
 use arena_sim::maps::Level;
 use arena_sim::weapons::{Arsenal, WEAPONS, WeaponEvent, WeaponInput};
 use arena_sim::{PlayerEvent, PlayerInput, PlayerState, TICK};
@@ -68,6 +70,7 @@ struct Latch {
     nade: bool,
     select: Option<usize>,
     cycle: i32,
+    tag: bool,
     /// El clic que toma el mouse no dispara.
     grabbed_at: f64,
 }
@@ -83,6 +86,8 @@ pub struct LocalPlayer {
     pub max_hp: f32,
     pub last_hurt: f32,
     pub regen_mul: f32,
+    /// Integridad que devuelve cada baja (mejora Absorción).
+    pub leech: f32,
     /// Fase del balanceo al caminar.
     pub bob: f32,
     /// 0..1: viñeta roja al recibir daño.
@@ -146,6 +151,7 @@ pub fn spawn_player(commands: &mut Commands, level: &LevelRes, start: Option<[f3
         max_hp: 100.0,
         last_hurt: 10.0,
         regen_mul: 1.0,
+        leech: 0.0,
         bob: 0.0,
         hurt_flash: 0.0,
         dmg_dir: 0.0,
@@ -196,8 +202,8 @@ fn mouse_look(motion: Res<AccumulatedMouseMotion>, cursor: Single<&CursorOptions
     look.sway_y = (look.sway_y + d.y * 0.0001).clamp(-0.05, 0.05);
 }
 
-fn latch_input(key: Res<ButtonInput<KeyCode>>, scroll: Res<AccumulatedMouseScroll>, cursor: Single<&CursorOptions>, mut latch: ResMut<Latch>) {
-    if cursor.grab_mode == CursorGrabMode::None {
+fn latch_input(key: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>, scroll: Res<AccumulatedMouseScroll>, cursor: Single<&CursorOptions>, perks: Res<PerkState>, mut latch: ResMut<Latch>) {
+    if cursor.grab_mode == CursorGrabMode::None || perks.active() {
         return;
     }
     latch.jump |= key.just_pressed(KeyCode::Space);
@@ -205,6 +211,7 @@ fn latch_input(key: Res<ButtonInput<KeyCode>>, scroll: Res<AccumulatedMouseScrol
     latch.hook |= key.just_pressed(KeyCode::KeyE) || key.just_pressed(KeyCode::ControlLeft) || key.just_pressed(KeyCode::ControlRight);
     latch.reload |= key.just_pressed(KeyCode::KeyR);
     latch.nade |= key.just_pressed(KeyCode::KeyG);
+    latch.tag |= key.just_pressed(KeyCode::KeyT) || mouse.just_pressed(MouseButton::Middle);
     for (i, k) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4].into_iter().enumerate() {
         if key.just_pressed(k) {
             latch.select = Some(i);
@@ -231,7 +238,11 @@ fn step_player(
     mut rig: ResMut<GunRig>,
     mut fx: ResMut<Fx>,
     mut snd: ResMut<Sounds>,
+    mut perks: ResMut<PerkState>,
 ) {
+    if perks.active() {
+        return;
+    }
     let playing = cursor.grab_mode != CursorGrabMode::None;
     let axis = |pos: KeyCode, neg: KeyCode| if playing { f32::from(u8::from(key.pressed(pos))) - f32::from(u8::from(key.pressed(neg))) } else { 0.0 };
     let input = PlayerInput {
@@ -255,7 +266,7 @@ fn step_player(
     };
     let lp = &mut *lp;
     let level = &mut level.0;
-    let game = &mut game.0;
+    let GameRes(game, generation) = &mut *game;
     lp.prev = lp.state.eye();
     let aim_before = lp.state.aim_t;
     let mut pev = std::mem::take(&mut lp.events);
@@ -324,7 +335,14 @@ fn step_player(
     // partida
     let s = &lp.state;
     let target = Target { pos: s.pos, body: s.body(), vel: s.vel, feet: s.feet(), crouch_t: s.crouch_t, evasive: s.hook.is_some() || s.dash_t > 0.0 };
-    game.step(level, &target, lp.hp >= lp.max_hp, TICK);
+    if !crate::off("ai") {
+        game.step(level, &target, lp.hp >= lp.max_hp, TICK);
+    }
+    let actor = Actor { pos: lp.state.pos, feet: lp.state.feet(), f_held: playing && key.pressed(KeyCode::KeyF) };
+    game.step_objectives(level, &actor, TICK);
+    if std::mem::take(&mut latch.tag) {
+        game.try_tag(level, lp.state.eye(), lp.state.look_dir());
+    }
     let beeps = game.nades.iter().filter(|n| !n.impact && n.beep > 0.3 - TICK && n.beep <= 0.3).count();
     if beeps > 0 {
         snd.play(S::Beep);
@@ -345,6 +363,11 @@ fn step_player(
                 Snd::Crit => snd.play(S::Crit),
                 Snd::Ricochet => snd.play(S::Ricochet),
                 Snd::Pickup => snd.play(S::Pickup),
+                Snd::Plant => snd.play(S::Plant),
+                Snd::Takedown => snd.play(S::Takedown),
+                Snd::Objective => snd.play(S::Objective),
+                Snd::Beep => snd.play(S::Beep),
+                Snd::Tag => snd.play(S::Tag),
             },
             GameEvent::Burst { pos, color, n, speed, life } => fx.burst(pos, color, n, speed, life),
             GameEvent::Tracer { a, b, color, life } => fx.tracer(a, b, color, life),
@@ -358,6 +381,29 @@ fn step_player(
             GameEvent::Num { pos, value, crit } => ui.nums.push((pos, value, crit, 0.0)),
             GameEvent::Heal(h) => lp.hp = (lp.hp + h).min(lp.max_hp),
             GameEvent::Overdrive => lp.arsenal.overdrive = 8.0,
+            GameEvent::Refill => {
+                lp.hp = lp.max_hp;
+                lp.arsenal.refill();
+            }
+            GameEvent::Unlock => {
+                lp.arsenal.unlocked = [true; 4];
+                lp.arsenal.refill();
+            }
+            GameEvent::Victory { bonus } => ui.banner("DISTRITO LIBERADO", format!("+{bonus} de bono · {} puntos en total", game.score)),
+            GameEvent::OfferPerk => {
+                perks.offer(&mut lp.rng);
+                snd.play(S::Perk);
+            }
+            GameEvent::WaveCleared => lp.arsenal.nades = (lp.arsenal.nades + 1).min(lp.arsenal.max_nades),
+            GameEvent::Score { points, label } => {
+                if !label.starts_with("OBJETIVO") && lp.leech > 0.0 {
+                    lp.hp = (lp.hp + lp.leech).min(lp.max_hp);
+                }
+                // si llegan seguidos se suman, como en los shooters
+                let total = if ui.popup_t > 0.0 { ui.popup.map_or(0, |p| p.0) } else { 0 } + points;
+                ui.popup = Some((total, label));
+                ui.popup_t = 1.4;
+            }
         }
     }
     for _ in 0..std::mem::take(&mut lp.hurt_count).min(1) {
@@ -371,7 +417,10 @@ fn step_player(
         lp.hp = (lp.hp + 4.0 * lp.regen_mul * TICK).min(lp.max_hp);
     }
     if lp.hp <= 0.0 {
-        player_down(lp, game, level, &mut ui);
+        if player_down(lp, game, level, &mut ui) {
+            *generation += 1;
+            perks.taken.clear();
+        }
     }
     if lp.state.on_ground && lp.state.slide <= 0.0 {
         lp.bob += TICK * lp.state.horizontal_speed() * 1.6;
@@ -382,11 +431,15 @@ fn step_player(
 
 /// Caída del jugador. En la ciudad cuesta un intento y se reaparece en el punto de
 /// reabastecimiento más cercano; sin intentos (o en oleadas) la partida vuelve a empezar.
-fn player_down(lp: &mut LocalPlayer, game: &mut Game, level: &mut Level, ui: &mut UiFeed) {
+/// Devuelve si la partida volvió a empezar.
+fn player_down(lp: &mut LocalPlayer, game: &mut Game, level: &mut Level, ui: &mut UiFeed) -> bool {
     let city_lives = game.city.as_ref().map(|c| c.lives);
     let respawn = |lp: &mut LocalPlayer, at: Vec3| {
-        let yaw = lp.state.yaw;
+        let (yaw, sm, mj, dm) = (lp.state.yaw, lp.state.speed_mul, lp.state.max_jumps, lp.state.dash_cd_mul);
         lp.state = PlayerState::new(at.x, at.z);
+        lp.state.speed_mul = sm;
+        lp.state.max_jumps = mj;
+        lp.state.dash_cd_mul = dm;
         lp.state.pos = Vec3::new(at.x, at.y, at.z);
         lp.state.yaw = yaw;
         lp.prev = lp.state.pos;
@@ -402,6 +455,7 @@ fn player_down(lp: &mut LocalPlayer, game: &mut Game, level: &mut Level, ui: &mu
             respawn(lp, safe);
             let left = l - 1;
             ui.banner("CAÍSTE", if left > 1 { format!("Te quedan {left} intentos") } else { "Último intento".into() });
+            false
         }
         _ => {
             let (score, wave, kills) = (game.score, game.wave, game.kills);
@@ -415,6 +469,11 @@ fn player_down(lp: &mut LocalPlayer, game: &mut Game, level: &mut Level, ui: &mu
             } else {
                 ui.banner("TE DESMANTELARON", format!("{score} puntos · oleada {wave} · {kills} bajas"));
             }
+            lp.max_hp = 100.0;
+            lp.hp = 100.0;
+            lp.regen_mul = 1.0;
+            lp.leech = 0.0;
+            true
         }
     }
 }
