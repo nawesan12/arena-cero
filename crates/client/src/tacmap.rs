@@ -60,6 +60,12 @@ fn plan(level: &arena_sim::Level) -> Image {
             }
         }
     }
+    // el río (los huecos grandes del piso)
+    for h in &level.world.holes {
+        if (h[2] - h[0]).max(h[3] - h[1]) > 60.0 {
+            rect(h[0], h[1], h[2], h[3], [0.11, 0.25, 0.33, 1.0]);
+        }
+    }
     for b in level.world.colliders() {
         let h = b.max.y;
         if h < 2.4 || b.max.x - b.min.x > 60.0 || b.max.z - b.min.z > 60.0 {

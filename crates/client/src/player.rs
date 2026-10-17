@@ -331,6 +331,11 @@ fn step_player(
             PlayerEvent::Slide => snd.play(S::Slide),
             PlayerEvent::HookFired => snd.play(S::Hook),
             PlayerEvent::HookMiss => snd.play(S::HookMiss),
+            PlayerEvent::Splash => {
+                fx.burst(lp.state.pos - Vec3::Y * EYE, 0x9fd8ff, 30, 5.0, 0.6);
+                snd.play(S::Toss);
+                ui.banner("AL AGUA", "La corriente te devolvió a la costanera");
+            }
             _ => {}
         }
     }

@@ -36,6 +36,7 @@ struct Tex {
     plaster: Handle<Image>,
     glass: Handle<Image>,
     brick: Handle<Image>,
+    grass: Handle<Image>,
     panel: Handle<Image>,
     billboards: [Handle<Image>; 4],
     pub sky_city: Handle<Image>,
@@ -80,6 +81,7 @@ impl Looks {
             plaster: images.add(textures::plaster()),
             glass: images.add(textures::glass()),
             brick: images.add(textures::brick()),
+            grass: images.add(textures::grass()),
             panel: images.add(textures::panel()),
             billboards: [0, 1, 2, 3].map(|k| images.add(textures::billboard(k))),
             sky_city: images.add(textures::sky(true)),
@@ -168,6 +170,8 @@ impl Looks {
             Mat::Billboard(k) => (StandardMaterial { base_color_texture: Some(t.billboards[k as usize % 4].clone()), unlit: true, ..default() }, None),
             Mat::Neon(k) => (unlit([0xff3df0, 0x3dfcff, 0xffd23d, 0x7dff5a][k as usize % 4]), None),
             Mat::Bollard => (lit(0x30363a, 0.45, 0.7), None),
+            Mat::Grass => (tex(&t.grass, 0xffffff, 0.95, 0.0), Some(2.0)),
+            Mat::Sea => (lit(0x2c6a80, 0.12, 0.05), None),
         }
     }
 }

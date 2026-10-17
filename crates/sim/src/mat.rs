@@ -57,6 +57,10 @@ pub enum Mat {
     Neon(u8),
     /// Bolardos y tachos metálicos de la calle.
     Bollard,
+    /// Pasto (parques, bosque, cerros).
+    Grass,
+    /// Agua del río (opaca, a diferencia de `Water`).
+    Sea,
 }
 
 pub const FACADES: u8 = 8;

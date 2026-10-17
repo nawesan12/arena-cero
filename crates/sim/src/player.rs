@@ -49,6 +49,8 @@ pub enum PlayerEvent {
     /// Daño recibido por el entorno (lava).
     Burn(u8),
     Land,
+    /// Se cayó al río y lo sacaron a la orilla.
+    Splash,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -395,6 +397,21 @@ impl PlayerState {
         let lim = world.lim();
         self.pos.x = self.pos.x.clamp(-lim, lim);
         self.pos.z = self.pos.z.clamp(-lim, lim);
+        // al agua: la corriente te devuelve a la orilla más cercana, 1,2 m adentro
+        if self.feet() < -0.6 {
+            if let Some(w) = world.water.iter().find(|w| self.pos.x > w[0] && self.pos.x < w[2] && self.pos.z > w[1] && self.pos.z < w[3]) {
+                let (x, z) = (self.pos.x, self.pos.z);
+                let exits = [(w[0] - 1.2, z), (w[2] + 1.2, z), (x, w[1] - 1.2), (x, w[3] + 1.2)];
+                let land = |p: &(f32, f32)| p.0.abs() < lim && p.1.abs() < lim;
+                if let Some(&(nx, nz)) = exits.iter().filter(|p| land(p)).min_by(|a, b| (a.0 - x).hypot(a.1 - z).total_cmp(&(b.0 - x).hypot(b.1 - z))) {
+                    let g = world.ground_at(nx, nz, 20.0);
+                    self.pos = Vec3::new(nx, g + EYE, nz);
+                    self.vel = Vec3::ZERO;
+                    self.hook = None;
+                    ev.push(PlayerEvent::Splash);
+                }
+            }
+        }
         self.shake = (self.shake - dt * 2.2).max(0.0);
     }
 }

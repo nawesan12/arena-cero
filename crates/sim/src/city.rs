@@ -5,6 +5,8 @@ use crate::mat::{self, Mat};
 
 #[path = "city2.rs"]
 pub mod city2;
+#[path = "city_edge.rs"]
+pub mod city_edge;
 use crate::rng::Rng;
 use crate::world::{ColliderId, CylAxis, Cylinder, STEP, VisualBox, VisualGroup, World};
 use glam::Vec3;
@@ -828,7 +830,7 @@ impl B<'_> {
     fn block_terrace_park(&mut self, bx: f32, bz: f32) {
         for k in 1..=6 {
             let s = 30.0 - k as f32 * 4.0;
-            self.w.add_box(bx, bz, s, k as f32 * STEP, s, if k % 2 == 1 { Mat::Hedge } else { Mat::Sidewalk });
+            self.w.add_box(bx, bz, s, k as f32 * STEP, s, if k % 2 == 1 { Mat::Grass } else { Mat::Sidewalk });
         }
         for (dx, dz) in [(-1.5, -1.5), (1.5, -1.5), (-1.5, 1.5), (1.5, 1.5)] {
             self.w.add_block(bx + dx, 6.0 * STEP, bz + dz, 0.2, 2.6, 0.2, Mat::Pole);
@@ -869,6 +871,8 @@ impl B<'_> {
     }
 
     fn block_park(&mut self, bx: f32, bz: f32) {
+        // césped (nuevo; antes el parque era vereda gris)
+        self.w.add_visual(bx, 0.17, bz, BLOCK - 3.0, 0.02, BLOCK - 3.0, Mat::Grass, false);
         for _ in 0..8 {
             let x = bx + self.r.signed() * 12.0;
             let z = bz + self.r.signed() * 12.0;
@@ -1107,22 +1111,13 @@ fn outer(b: &mut B, vehicles: &mut Vec<(Vec3, f32, u8)>, outposts: &mut Vec<Outp
     let a = b.w.a;
     b.r = Rng::new(SEED_OUTER);
     let is_outer = |x: f32, z: f32| x.abs() > CORE_A || z.abs() > CORE_A;
-    // muro nuevo y horizonte más allá
-    for [x, z, ww, d] in [[0.0, -a, a * 2.0 + 2.0, 2.0], [0.0, a, a * 2.0 + 2.0, 2.0], [-a, 0.0, 2.0, a * 2.0 + 2.0], [a, 0.0, 2.0, a * 2.0 + 2.0]] {
-        b.w.add_box(x, z, ww, 12.0, d, Mat::Concrete);
-    }
-    for i in 0..64 {
-        let t = b.r.signed() * a;
-        let o = a + 14.0 + b.r.f() * 40.0;
-        let ww = 14.0 + b.r.f() * 18.0;
-        let h = 22.0 + b.r.f() * 60.0;
-        let (x, z) = match i % 4 {
-            0 => (t, -o),
-            1 => (t, o),
-            2 => (-o, t),
-            _ => (o, t),
-        };
-        b.w.add_visual(x, h / 2.0, z, ww, h, ww, Mat::Tower((i % 4) as u8), false);
+    // Antes acá iban el muro de 12 m y un anillo de torres de fondo; ahora los bordes son
+    // naturales (`city_edge`). Se siguen sacando los mismos números para que el resto de los
+    // barrios salga idéntico.
+    for _ in 0..64 {
+        for _ in 0..4 {
+            b.r.next();
+        }
     }
     // campamentos: (centro, nombre, portones)
     let camps: [(f32, f32, &str, &[char]); 6] = [
@@ -1247,6 +1242,9 @@ fn outer(b: &mut B, vehicles: &mut Vec<(Vec3, f32, u8)>, outposts: &mut Vec<Outp
         vehicles.push((Vec3::new(x, 0.0, z), if ax { FRAC_PI_2 } else { 0.0 }, c));
         placed += 1;
     }
+    // bordes naturales (río, cerros, bosque); los autos que caían en esa franja se sacan
+    city_edge::build(b);
+    vehicles.retain(|(p, _, _)| p.x.abs() < 277.0 && p.z.abs() < 277.0);
 }
 
 #[cfg(test)]

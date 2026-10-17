@@ -441,6 +441,34 @@ fn brick_canvas() -> Canvas {
     g
 }
 
+/// Pasto (nuevo): verde con matas más claras y más oscuras y alguna flor. 128 px = 2 m.
+pub fn grass() -> Image {
+    grass_canvas().into_image()
+}
+
+fn grass_canvas() -> Canvas {
+    let s = 128;
+    let sf = s as f32;
+    let mut r = Rng::new(27);
+    let mut g = Canvas::new(s, hex(0x5f8a3e));
+    for _ in 0..40 {
+        let (x, y) = (r.f() * sf, r.f() * sf);
+        let c = if r.next() < 0.5 { rgba(70.0, 110.0, 45.0, 0.35) } else { rgba(130.0, 160.0, 80.0, 0.3) };
+        g.ellipse(x, y, 6.0 + r.f() * 12.0, 4.0 + r.f() * 8.0, c);
+    }
+    for _ in 0..2600 {
+        let (x, y) = (r.f() * sf, r.f() * sf);
+        let v = r.f();
+        let c = if v < 0.5 { rgba(60.0, 95.0, 38.0, 0.6) } else { rgba(140.0, 175.0, 90.0, 0.5) };
+        g.rect(x, y, 1.0, 2.0 + r.f() * 2.0, c);
+    }
+    for _ in 0..14 {
+        let (x, y) = (r.f() * sf, r.f() * sf);
+        g.rect(x, y, 1.5, 1.5, if r.next() < 0.5 { hex(0xf2efe0) } else { hex(0xf0d050) });
+    }
+    g
+}
+
 /// Paneles de hormigón premoldeado (nuevo): juntas cada 1,5 m, bulones y manchas. 128 px = 3 m.
 pub fn panel() -> Image {
     panel_canvas().into_image()
@@ -569,7 +597,7 @@ mod preview {
     #[test]
     fn guardar_texturas_nuevas() {
         let Some(dir) = std::env::var_os("ARENA_TEX") else { return };
-        let mut list = vec![("ladrillo", brick_canvas()), ("paneles", panel_canvas())];
+        let mut list = vec![("ladrillo", brick_canvas()), ("paneles", panel_canvas()), ("pasto", grass_canvas())];
         for k in 0..4 {
             list.push((["cartel0", "cartel1", "cartel2", "cartel3"][k as usize], billboard_canvas(k)));
         }

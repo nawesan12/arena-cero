@@ -101,6 +101,8 @@ pub struct World {
     frames: Vec<Option<Frame>>,
     /// Huecos en el piso (entradas al subte): ahí no hay plano en y = 0.
     pub holes: Vec<[f32; 4]>,
+    /// Agua [x0, z0, x1, z1]: si el jugador se cae, la corriente lo devuelve a la orilla.
+    pub water: Vec<[f32; 4]>,
     /// Rango de celdas de cada caja, para no repetirla en las consultas.
     ranges: Vec<[i32; 4]>,
     cells: Vec<Vec<ColliderId>>,
@@ -125,6 +127,7 @@ impl World {
             boxes: Vec::new(),
             frames: Vec::new(),
             holes: Vec::new(),
+            water: Vec::new(),
             ranges: Vec::new(),
             cells: vec![Vec::new(); (n * n) as usize],
             n,
