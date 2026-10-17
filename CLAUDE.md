@@ -39,7 +39,9 @@ Hecho (detalle en `docs/`): todo el port de la web (mundo, 5 mapas, jugador, arm
 objetivos, F/T/Tab, mejoras, HUD) y además vehículos, ciudad de 590 m con barrios y campamentos, patrullas en auto,
 misiones dinámicas, economía/tienda/gadgets, día y noche, Ciudad 2.0 (cajas giradas, plaza, bulevar curvo,
 diagonal, rotondas, locales, subte con 3 estaciones), peatones y tránsito, gancho-péndulo,
-y la **Campaña de operaciones** (`campaign.rs` + `campaign_ui.rs`, 8 operaciones, menú principal, rango).
+la **Campaña de operaciones** (`campaign.rs` + `campaign_ui.rs`, 10 operaciones con briefing, menú principal,
+rango), la **Ciudad 3.0** porteña (`town.rs`, `props.rs`, `city_edge.rs`), personas con esqueleto (`humanoid.rs`)
+y sonido de ciudad (`ambience.rs`).
 Falta: sensación arcade (bloom, hit-stop, combo), variedad visual de la ciudad, oleadas con cambio de mapa,
 servidor y cooperativo. Plan completo en `docs/HISTORIAL.md` ("Lo que sigue").
 - `cargo run -p arena_client -- --op 3` arranca directo en una operación; `--libre`, en el mundo libre.

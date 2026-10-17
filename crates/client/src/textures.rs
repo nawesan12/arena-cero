@@ -561,6 +561,59 @@ fn shop_canvas() -> Canvas {
     g
 }
 
+/// Retrato para la radio (nuevo): 0 Vera (pelo oscuro, auricular con micrófono), 1 radio enemiga
+/// (silueta con casco y visor rojo), 2 créditos.
+pub fn portrait(kind: u8) -> Image {
+    portrait_canvas(kind).into_image()
+}
+
+fn portrait_canvas(kind: u8) -> Canvas {
+    let s = 64;
+    match kind {
+        0 => {
+            let mut g = Canvas::new(s, hex(0x0e2a36));
+            g.vgrad(&[(0.0, hex(0x123848)), (1.0, hex(0x081820))]);
+            // pelo atrás, cuello, hombros
+            g.ellipse(32.0, 30.0, 17.0, 20.0, hex(0x1a1410));
+            g.rect(27.0, 42.0, 10.0, 10.0, hex(0xc8946c));
+            g.ellipse(32.0, 57.0, 25.0, 6.5, hex(0x2a3a44));
+            // cara
+            g.ellipse(32.0, 31.0, 12.0, 15.0, hex(0xd8a882));
+            // flequillo y pelo a los costados
+            g.ellipse(30.0, 18.0, 14.0, 6.0, hex(0x1a1410));
+            g.rect(18.0, 20.0, 5.0, 22.0, hex(0x1a1410));
+            g.rect(41.0, 20.0, 5.0, 20.0, hex(0x1a1410));
+            // ojos, cejas, boca
+            g.rect(25.0, 29.0, 4.0, 2.0, hex(0x1a2a30));
+            g.rect(35.0, 29.0, 4.0, 2.0, hex(0x1a2a30));
+            g.rect(24.0, 26.0, 6.0, 1.0, hex(0x2a1a10));
+            g.rect(34.0, 26.0, 6.0, 1.0, hex(0x2a1a10));
+            g.rect(29.0, 39.0, 6.0, 1.5, hex(0xa05a4a));
+            // auricular y micrófono
+            g.rect(16.0, 26.0, 5.0, 10.0, hex(0x5fd8ff));
+            g.rect(17.0, 14.0, 2.0, 14.0, hex(0x2a3a44));
+            g.line(20.0, 35.0, 28.0, 41.0, 1.5, hex(0x5fd8ff));
+            g
+        }
+        1 => {
+            let mut g = Canvas::new(s, hex(0x2a0e10));
+            g.vgrad(&[(0.0, hex(0x3a1214)), (1.0, hex(0x14080a))]);
+            g.ellipse(32.0, 57.0, 25.0, 6.5, hex(0x1f2427));
+            g.ellipse(32.0, 32.0, 13.0, 15.0, hex(0x2b3238));
+            g.ellipse(32.0, 24.0, 17.0, 11.0, hex(0x1f2427));
+            g.rect(21.0, 29.0, 22.0, 5.0, hex(0xff3d5a));
+            g
+        }
+        _ => {
+            let mut g = Canvas::new(s, hex(0x1a1a10));
+            g.vgrad(&[(0.0, hex(0x2a2410)), (1.0, hex(0x100c06))]);
+            g.ellipse(32.0, 32.0, 18.0, 18.0, hex(0xffb02e));
+            g.ellipse(32.0, 32.0, 12.0, 12.0, hex(0x1a1a10));
+            g
+        }
+    }
+}
+
 /// Pasto (nuevo): verde con matas más claras y más oscuras y alguna flor. 128 px = 2 m.
 pub fn grass() -> Image {
     grass_canvas().into_image()
@@ -717,7 +770,7 @@ mod preview {
     #[test]
     fn guardar_texturas_nuevas() {
         let Some(dir) = std::env::var_os("ARENA_TEX") else { return };
-        let mut list = vec![("ladrillo", brick_canvas()), ("paneles", panel_canvas()), ("pasto", grass_canvas()), ("local", shop_canvas())];
+        let mut list = vec![("ladrillo", brick_canvas()), ("paneles", panel_canvas()), ("pasto", grass_canvas()), ("local", shop_canvas()), ("vera", portrait_canvas(0)), ("enemigo", portrait_canvas(1))];
         for k in 0..4u8 {
             list.push((["frente0", "frente1", "frente2", "frente3"][k as usize], front_canvas(k)));
         }

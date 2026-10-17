@@ -115,6 +115,18 @@ dinámicas, economía, tienda, gadgets, día y noche, Ciudad 2.0, subte, peatone
 Colores en los vértices y materiales agrupados (2.992 → 1.305 mallas), detalles cortados a la distancia y sin
 sombra (1.458 → 408 mallas con sombra), sin caras de abajo y árboles con dos niveles de detalle.
 
+## Personajes, sonido y campaña ampliada (17/10/2026)
+
+- **Personas con esqueleto** (`humanoid.rs`): cápsulas y esferas con cadera, rodillas, hombros y codos; soldados
+  (fusilero con casco y visor, francotirador con capucha y rifle con mira, comandante con boina, sobretodo y escudo),
+  peatones con ropa propia de cada uno y cadáveres. Animación procedural: caminar, correr, rodilla en tierra,
+  apuntar, arma en guardia, respirar, huir con las manos arriba y caer. Se pueden dibujar sin abrir el juego
+  (`ARENA_HUMAN=archivo cargo test -p arena_client figuras`).
+- **Sonido de ciudad** (`ambience.rs`): tránsito, gente, pájaros, agua, viento, subte y grillos mezclados según el
+  lugar; bocinas, perros y gaviotas con posición. Muestra: `ARENA_WAV=archivo.wav cargo test -p arena_client muestra`.
+- **Campaña de 10 operaciones**: Nueve de Julio (cargas en el Obelisco) y El Coloso (jefe final); briefing con mapa
+  antes de cada una; retratos en la radio.
+
 ## Lo que sigue
 
 - Probar la ciudad nueva jugando: rendimiento (hay muchas más piezas), lugares de la campaña y autos.

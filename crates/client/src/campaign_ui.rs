@@ -23,7 +23,7 @@ const CYAN: Color = Color::srgb(0.373, 0.847, 1.0);
 const GOLD: Color = Color::srgb(1.0, 0.84, 0.3);
 const RED: Color = Color::srgb(1.0, 0.239, 0.353);
 const MINT: Color = Color::srgb(0.365, 1.0, 0.690);
-const ROWS: usize = 10;
+const ROWS: usize = 12;
 
 pub struct CampaignUiPlugin;
 
@@ -32,9 +32,10 @@ impl Plugin for CampaignUiPlugin {
         app.init_resource::<MenuOpen>()
             .init_resource::<Menu>()
             .init_resource::<RadioShow>()
+            .init_resource::<Briefing>()
             .insert_resource(Progress::load())
             .add_systems(PostStartup, (spawn, first_screen).chain())
-            .add_systems(Update, (menu_input, menu_draw, debrief, objective_panel, radio_panel).chain());
+            .add_systems(Update, (menu_input, menu_draw, debrief, briefing, objective_panel, radio_panel).chain());
     }
 }
 
@@ -199,12 +200,15 @@ struct RadioRoot;
 struct RadioWho;
 #[derive(Component)]
 struct RadioText;
+/// Retrato de quién habla: 0 Vera, 1 radio enemiga, 2 créditos.
+#[derive(Component)]
+struct RadioFace(u8);
 
 fn txt(s: &str, size: f32, c: Color, font: &Handle<Font>) -> impl Bundle {
     (Text::new(s), TextFont { font: FontSource::Handle(font.clone()), font_size: size.into(), ..default() }, TextColor(c))
 }
 
-fn spawn(mut commands: Commands, f: Res<Fonts>) {
+fn spawn(mut commands: Commands, f: Res<Fonts>, level: Res<LevelRes>, mut images: ResMut<Assets<Image>>) {
     let full = Node { position_type: PositionType::Absolute, width: percent(100), height: percent(100), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() };
     // menú principal
     commands.spawn((full.clone(), BackgroundColor(Color::srgba(0.02, 0.03, 0.035, 0.86)), GlobalZIndex(20), Visibility::Hidden, MenuRoot)).with_children(|p| {
@@ -243,6 +247,28 @@ fn spawn(mut commands: Commands, f: Res<Fonts>) {
             });
         });
     });
+    // briefing: título, lugar, texto de Vera y mapa con los lugares de la operación
+    let map = images.add(crate::tacmap::plan(&level.0));
+    commands.spawn((Node { position_type: PositionType::Absolute, width: percent(100), height: percent(100), justify_content: JustifyContent::Center, align_items: AlignItems::Center, column_gap: px(36), ..default() }, BackgroundColor(Color::srgba(0.02, 0.03, 0.035, 0.92)), GlobalZIndex(21), Visibility::Hidden, BriefRoot)).with_children(|p| {
+        p.spawn(Node { flex_direction: FlexDirection::Column, row_gap: px(12), width: px(440), ..default() }).with_children(|c| {
+            c.spawn(txt("BRIEFING", 14.0, CYAN, &f.mono));
+            c.spawn((txt("", 46.0, INK, &f.display), BriefTitle));
+            c.spawn((txt("", 15.0, AMBER, &f.display), BriefPlace));
+            c.spawn(Node { flex_direction: FlexDirection::Row, column_gap: px(12), align_items: AlignItems::Start, ..default() }).with_children(|r| {
+                r.spawn((Node { width: px(64), height: px(64), ..default() }, ImageNode::new(images.add(crate::textures::portrait(0)))));
+                r.spawn(Node { flex_direction: FlexDirection::Column, row_gap: px(4), width: px(360), ..default() }).with_children(|t| {
+                    t.spawn(txt("> VERA", 12.0, CYAN, &f.mono));
+                    t.spawn((txt("", 17.0, INK, &f.display), BriefText));
+                });
+            });
+            c.spawn(txt("ENTER · EMPEZAR LA OPERACIÓN", 15.0, AMBER, &f.display));
+        });
+        p.spawn((Node { width: px(420), height: px(420), ..default() }, ImageNode::new(map), BriefMap)).with_children(|m| {
+            for i in 0..12 {
+                m.spawn((Node { position_type: PositionType::Absolute, width: px(12), height: px(12), margin: UiRect { left: px(-6), top: px(-6), ..default() }, border_radius: BorderRadius::MAX, ..default() }, BackgroundColor(GOLD), Visibility::Hidden, BriefDot(i)));
+            }
+        });
+    });
     // objetivo actual (arriba a la izquierda, debajo del reloj)
     commands
         .spawn((Node { position_type: PositionType::Absolute, left: px(18), top: px(96), flex_direction: FlexDirection::Column, row_gap: px(4), padding: UiRect::axes(px(12), px(8)), border: UiRect::left(px(3)), max_width: px(420), ..default() }, BorderColor::all(GOLD), BackgroundColor(Color::srgba(0.04, 0.06, 0.07, 0.55)), Visibility::Hidden, ObjRoot))
@@ -258,8 +284,15 @@ fn spawn(mut commands: Commands, f: Res<Fonts>) {
     commands
         .spawn((Node { position_type: PositionType::Absolute, left: px(18), top: px(196), flex_direction: FlexDirection::Column, row_gap: px(3), padding: UiRect::axes(px(12), px(8)), border: UiRect::left(px(3)), max_width: px(440), ..default() }, BorderColor::all(CYAN), BackgroundColor(Color::srgba(0.03, 0.06, 0.08, 0.7)), Visibility::Hidden, RadioRoot))
         .with_children(|p| {
-            p.spawn((txt("", 12.0, CYAN, &f.mono), RadioWho));
-            p.spawn((txt("", 16.0, INK, &f.display), RadioText));
+            p.spawn(Node { flex_direction: FlexDirection::Row, column_gap: px(10), align_items: AlignItems::Start, ..default() }).with_children(|r| {
+                r.spawn((Node { width: px(48), height: px(48), ..default() }, ImageNode::new(images.add(crate::textures::portrait(0))), RadioFace(0)));
+                r.spawn((Node { width: px(48), height: px(48), display: Display::None, ..default() }, ImageNode::new(images.add(crate::textures::portrait(1))), RadioFace(1)));
+                r.spawn((Node { width: px(48), height: px(48), display: Display::None, ..default() }, ImageNode::new(images.add(crate::textures::portrait(2))), RadioFace(2)));
+                r.spawn(Node { flex_direction: FlexDirection::Column, row_gap: px(3), ..default() }).with_children(|t| {
+                    t.spawn((txt("", 12.0, CYAN, &f.mono), RadioWho));
+                    t.spawn((txt("", 16.0, INK, &f.display), RadioText));
+                });
+            });
         });
 }
 
@@ -277,9 +310,27 @@ fn first_screen(mode: Res<StartMode>, mut open: ResMut<MenuOpen>, mut menu: ResM
     }
 }
 
+/// Briefing de la operación que está por empezar (la partida espera hasta Enter).
+#[derive(Resource, Default)]
+struct Briefing(Option<usize>);
+
+#[derive(Component)]
+struct BriefRoot;
+#[derive(Component)]
+struct BriefTitle;
+#[derive(Component)]
+struct BriefPlace;
+#[derive(Component)]
+struct BriefText;
+#[derive(Component)]
+struct BriefMap;
+#[derive(Component)]
+struct BriefDot(usize);
+
 /// Lo que hace falta para (re)empezar una partida.
 #[derive(bevy::ecs::system::SystemParam)]
 struct Params<'w> {
+    brief: ResMut<'w, Briefing>,
     game: ResMut<'w, GameRes>,
     level: ResMut<'w, LevelRes>,
     lp: ResMut<'w, LocalPlayer>,
@@ -322,6 +373,7 @@ fn fresh_city(p: &mut Params, make: impl FnOnce(&mut arena_sim::Level) -> Game) 
 }
 
 fn start_op(p: &mut Params, op: usize) {
+    p.brief.0 = Some(op);
     fresh_city(p, |l| Game::new_campaign(l, op));
     if let Some((at, yaw)) = p.game.0.campaign_start() {
         reset_player(p, at, yaw);
@@ -731,6 +783,7 @@ fn radio_panel(
     mut root: Query<&mut Visibility, With<RadioRoot>>,
     mut who_q: Query<(&mut Text, &mut TextColor), (With<RadioWho>, Without<RadioText>)>,
     mut text_q: Query<&mut Text, (With<RadioText>, Without<RadioWho>)>,
+    mut faces: Query<(&RadioFace, &mut Node)>,
 ) {
     if open.0 {
         for mut v in &mut root {
@@ -756,6 +809,13 @@ fn radio_panel(
         *v = if show.cur.is_some() { Visibility::Inherited } else { Visibility::Hidden };
     }
     let Some((who, text, t)) = show.cur.as_ref() else { return };
+    let face = if *who == arena_sim::campaign::VERA { 0 } else if *who == "CRÉDITOS" { 2 } else { 1 };
+    for (rf, mut n) in &mut faces {
+        let want = if rf.0 == face { Display::Flex } else { Display::None };
+        if n.display != want {
+            n.display = want;
+        }
+    }
     let n_shown = (t * 55.0) as usize;
     let shown: String = text.chars().take(n_shown).collect();
     // "voz" de radio: un pitido cada cuatro letras mientras escribe
@@ -768,11 +828,89 @@ fn radio_panel(
         if w.0 != s {
             w.0 = s;
         }
-        c.0 = if *who == arena_sim::campaign::VERA { CYAN } else { RED };
+        c.0 = if *who == arena_sim::campaign::VERA { CYAN } else if *who == "CRÉDITOS" { GOLD } else { RED };
     }
     for mut tx in &mut text_q {
         if tx.0 != shown {
             tx.0 = shown.clone();
         }
+    }
+}
+
+/// Pantalla de briefing antes de cada operación: la partida espera hasta Enter.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn briefing(
+    key: Res<ButtonInput<KeyCode>>,
+    mut brief: ResMut<Briefing>,
+    mut open: ResMut<MenuOpen>,
+    game: Res<GameRes>,
+    level: Res<LevelRes>,
+    mut cursor: Single<&mut CursorOptions>,
+    mut root: Query<&mut Visibility, With<BriefRoot>>,
+    mut title: Query<&mut Text, (With<BriefTitle>, Without<BriefPlace>, Without<BriefText>)>,
+    mut place: Query<&mut Text, (With<BriefPlace>, Without<BriefTitle>, Without<BriefText>)>,
+    mut text: Query<&mut Text, (With<BriefText>, Without<BriefTitle>, Without<BriefPlace>)>,
+    mut dots: Query<(&BriefDot, &mut Node, &mut Visibility, &mut BackgroundColor), Without<BriefRoot>>,
+    mut snd: ResMut<crate::audio::Sounds>,
+    mut armed: Local<bool>,
+) {
+    let show = brief.0.is_some() && game.0.campaign.is_some();
+    for mut v in &mut root {
+        *v = if show { Visibility::Inherited } else { Visibility::Hidden };
+    }
+    if !show {
+        brief.0 = None;
+        *armed = false;
+        return;
+    }
+    open.0 = true;
+    cursor.visible = true;
+    cursor.grab_mode = CursorGrabMode::None;
+    let Some(cp) = game.0.campaign.as_ref() else { return };
+    for mut t in &mut title {
+        let s = format!("{} · {}", cp.op + 1, cp.def.name.to_uppercase());
+        if t.0 != s {
+            t.0 = s;
+        }
+    }
+    for mut t in &mut place {
+        if t.0 != cp.def.place {
+            t.0 = cp.def.place.to_uppercase();
+        }
+    }
+    for mut t in &mut text {
+        if t.0 != cp.def.brief {
+            t.0 = cp.def.brief.to_string();
+        }
+    }
+    // puntos en el mapa: el inicio en cian y los lugares de la operación en dorado
+    let a = level.0.info.a;
+    let to = |p: Vec3| ((p.x + a) / (2.0 * a) * 420.0, (p.z + a) / (2.0 * a) * 420.0);
+    let mut pts = vec![(cp.def.start, CYAN)];
+    if let Some(c) = level.0.city.as_ref() {
+        pts.extend(cp.def.points(c).into_iter().map(|p| (p, GOLD)));
+    }
+    for (d, mut n, mut v, mut bg) in &mut dots {
+        match pts.get(d.0) {
+            Some(&(p, col)) => {
+                let (x, y) = to(p);
+                n.left = px(x);
+                n.top = px(y);
+                bg.0 = col;
+                *v = Visibility::Inherited;
+            }
+            None => *v = Visibility::Hidden,
+        }
+    }
+    // el Enter que abrió el briefing (desde el menú o el resumen) no lo cierra
+    if !*armed {
+        *armed = true;
+        return;
+    }
+    if key.just_pressed(KeyCode::Enter) || key.just_pressed(KeyCode::Space) {
+        brief.0 = None;
+        *armed = false;
+        open.0 = false;
+        snd.play(crate::audio::S::Radio);
     }
 }

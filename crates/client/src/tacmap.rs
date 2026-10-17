@@ -39,7 +39,7 @@ struct Dot(usize);
 struct Me;
 
 /// Planta: manzanas y edificios coloreados por altura.
-fn plan(level: &arena_sim::Level) -> Image {
+pub fn plan(level: &arena_sim::Level) -> Image {
     let a = level.info.a;
     let k = SIZE as f32 / (a * 2.0);
     let mut px = vec![[0.125f32, 0.157, 0.173, 1.0]; SIZE * SIZE];

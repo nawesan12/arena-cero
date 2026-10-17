@@ -18,10 +18,10 @@ use std::f32::consts::PI;
 
 pub const VERA: &str = "VERA";
 pub const ENEMY: &str = "RADIO ENEMIGA";
-pub const N_OPS: usize = 8;
+pub const N_OPS: usize = 10;
 
 /// Nombre de cada operación (para el menú).
-pub const OP_NAMES: [&str; N_OPS] = ["Llegada", "Antena", "Apagón", "Fuga de datos", "Arsenal", "La grúa", "Trenes", "Mando"];
+pub const OP_NAMES: [&str; N_OPS] = ["Llegada", "Antena", "Apagón", "Fuga de datos", "Arsenal", "La grúa", "Trenes", "Mando", "Nueve de Julio", "El Coloso"];
 
 #[derive(Clone, Debug)]
 pub enum Goal {
@@ -74,6 +74,8 @@ pub enum Action {
     Booms(Vec<Vec3>),
     Blackout(bool),
     Refill,
+    /// El Coloso: dron jefe enorme que caza al jugador (cuenta como objetivo del paso).
+    Boss { at: Vec3, hp: f32 },
 }
 
 #[derive(Clone, Debug)]
@@ -91,6 +93,8 @@ pub struct Step {
 #[derive(Clone, Debug)]
 pub struct OpDef {
     pub name: &'static str,
+    /// Texto del briefing (antes de empezar).
+    pub brief: &'static str,
     pub place: &'static str,
     /// Hora fija de la operación.
     pub hour: f32,
@@ -99,6 +103,27 @@ pub struct OpDef {
     pub start: Vec3,
     pub steps: Vec<Step>,
     pub outro: Vec<(&'static str, &'static str)>,
+}
+
+impl OpDef {
+    /// Lugares de la operación para el mapa del briefing: objetivos con posición y puestos.
+    pub fn points(&self, c: &CityData) -> Vec<Vec3> {
+        let mut v = Vec::new();
+        for s in &self.steps {
+            match &s.goal {
+                Goal::Reach { pos, .. } | Goal::Hold { pos, .. } => v.push(*pos),
+                Goal::Use { points, .. } => v.extend(points.iter().copied()),
+                Goal::Outpost(id) => {
+                    if let Some(o) = c.outposts.iter().find(|o| o.id == *id) {
+                        v.push(Vec3::new(o.cx, 0.0, o.cz));
+                    }
+                }
+                _ => {}
+            }
+        }
+        v.dedup_by(|a, b| a.distance(*b) < 8.0);
+        v
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -278,6 +303,7 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
     {
         v_ops.push(OpDef {
             name: OP_NAMES[0],
+            brief: "Llegás al Distrito Sur. Antes de mandarte a pelear, Vera quiere ver cómo te movés: correr, el gancho, un derribo silencioso y manejar hasta el refugio.",
             place: "Barrio Oeste · 09:00",
             hour: 9.0,
             par: 170.0,
@@ -303,6 +329,7 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
         let out = v(cx + 22.0, 0.16, cz);
         v_ops.push(OpDef {
             name: OP_NAMES[1],
+            brief: "La antena de comunicaciones les trae refuerzos cada vez que suena una alarma. Conseguí la tarjeta del oficial, apagá su torreta y volala.",
             place: "Antena de comunicaciones · 17:30",
             hour: 17.5,
             par: 240.0,
@@ -332,6 +359,7 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
         let (cx, cz) = (s.cx, s.cz);
         v_ops.push(OpDef {
             name: OP_NAMES[2],
+            brief: "La subestación alimenta todas las torretas de la ciudad. Saboteá los transformadores y el generador, aguantá mientras Vera corta la red y escapá a oscuras.",
             place: "Subestación eléctrica · 22:00",
             hour: 22.0,
             par: 300.0,
@@ -365,6 +393,7 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
         let obj = d.obj_pos.unwrap_or(v(cx, 1.0, cz));
         v_ops.push(OpDef {
             name: OP_NAMES[3],
+            brief: "En el último piso de la torre de oficinas está el registro de todas sus unidades. Descargalo, defendé la subida y salí de ahí.",
             place: "Torre de oficinas · 11:00",
             hour: 11.0,
             par: 330.0,
@@ -393,6 +422,7 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
         let truck = vec![v2(250.0, sz(6) + 4.2), v2(sx(1) + 4.2, sz(6) + 4.2), v2(sx(1) + 4.2, sz(1) + 4.2), v2(250.0, sz(1) + 4.2)];
         v_ops.push(OpDef {
             name: OP_NAMES[4],
+            brief: "El arsenal se abre con un código que viaja en un camión. Interceptalo antes de que termine su recorrido, forzá el arsenal y llevate el lanzagranadas.",
             place: "Arsenal · 14:00",
             hour: 14.0,
             par: 300.0,
@@ -421,6 +451,7 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
         let cab = ob.obj_pos.unwrap_or(v(cx, 1.0, cz));
         v_ops.push(OpDef {
             name: OP_NAMES[5],
+            brief: "Desde la cabina de la grúa se ve medio distrito. Subí, hackeala y marcá a los cinco cabecillas para eliminarlos uno por uno.",
             place: "Obra en construcción · 06:00",
             hour: 6.0,
             par: 300.0,
@@ -450,6 +481,7 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
         let entrance = c.stations.first().map_or(v(0.0, 0.0, 0.0), |s| s.entrance);
         v_ops.push(OpDef {
             name: OP_NAMES[6],
+            brief: "Sus drones vuelan con el combustible del patio de trenes. Volá los tanques y el depósito, y perdé a los perseguidores en el subte.",
             place: "Patio de trenes · 20:00",
             hour: 20.0,
             par: 330.0,
@@ -480,6 +512,7 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
         let armored = vec![v2(sx(8) - 4.2, cz), v2(sx(8) - 4.2, sz(6) - 4.2), v2(sx(2) + 4.2, sz(6) - 4.2), v2(sx(2) + 4.2, sz(2) + 4.2), v2(sx(8) - 4.2, sz(2) + 4.2), v2(sx(8) - 4.2, sz(4) - 4.2)];
         v_ops.push(OpDef {
             name: OP_NAMES[7],
+            brief: "Sin antena, torretas ni drones, el comandante está solo con su guardia en la Casa de Gobierno. Esta vez no se escapa.",
             place: "Puesto de mando · 17:00",
             hour: 17.0,
             par: 420.0,
@@ -503,7 +536,61 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
                     .cp(plaza + Vec3::new(-9.0, 0.0, -6.0))
                     .say(&[vera("Cuarenta segundos. Aguantá en el parque."), (ENEMY, "¡Está en el parque! ¡Todos los que queden!")]),
             ],
-            outro: vec![vera("Te veo. Subí... El Distrito Sur es libre. Gracias.")],
+            outro: vec![vera("Te veo. Subí... El comandante cayó."), vera("Esperá. Hay movimiento en el puerto. Esto no terminó.")],
+        });
+    }
+    // 9 · Nueve de Julio: cargas en el Obelisco
+    {
+        let ob = v(sx(4), 0.0, sz(2));
+        v_ops.push(OpDef {
+            name: OP_NAMES[8],
+            brief: "Lo que queda del ejército plantó cargas en el Obelisco para voltearlo antes de irse. Desactivalas a tiempo y defendé la avenida.",
+            place: "Av. 9 de Julio y Corrientes · 19:30",
+            hour: 19.5,
+            par: 260.0,
+            start: v(sx(3), 0.16, sz(2) + 32.0),
+            steps: vec![
+                step("Llegá al Obelisco", Reach { pos: ob, r: 22.0 })
+                    .act(Squad { at: v(sx(4) + 10.0, 0.16, sz(2) + 16.0), n: 2, role: Role::Patrol, op: None, hunt: false, target: false, yaw: None })
+                    .act(Squad { at: v(sx(4) - 10.0, 0.16, sz(2) - 16.0), n: 2, role: Role::Patrol, op: None, hunt: false, target: false, yaw: None })
+                    .say(&[vera("Esto no es un cuartel: es el Obelisco. Pusieron cargas para tirarlo abajo."), vera("Hay guardias alrededor. Acercate por la 9 de Julio.")]),
+                step("Desactivá las 3 cargas", Use { points: vec![v(sx(4) + 3.4, 1.0, sz(2)), v(sx(4), 1.0, sz(2) - 3.4), v(sx(4) + 12.0, 1.0, sz(2) + 8.0)], secs: 2.5, label: "DESACTIVAR LA CARGA" })
+                    .limit(100.0)
+                    .cp(v(sx(4) + 6.0, 0.16, sz(2) + 14.0))
+                    .act(Hunters { at: v(sx(4), 24.0, sz(2) - 40.0), n: 2 })
+                    .act(Squad { at: v(sx(4) + 14.0, 0.16, sz(1)), n: 3, role: Role::Patrol, op: None, hunt: true, target: false, yaw: None })
+                    .say(&[vera("Tenés menos de dos minutos. Las tres cargas están marcadas: mantené F en cada una."), (ENEMY, "¡Está tocando las cargas! ¡Mátenlo!")]),
+                step("Defendé la avenida", Hold { pos: ob, r: 22.0, secs: 45.0, every: 9.0, n: 3, op: None })
+                    .say(&[vera("Desactivadas. Vienen por la avenida a terminar el trabajo. Aguantá 45 segundos.")]),
+            ],
+            outro: vec![vera("El Obelisco sigue en pie. Y la ciudad vio quién lo defendió.")],
+        });
+    }
+    // 10 · El Coloso: jefe final en la Plaza Mayor
+    {
+        let pm = block_center(6, 4);
+        let plaza = v(pm.x, 0.0, pm.y);
+        v_ops.push(OpDef {
+            name: OP_NAMES[9],
+            brief: "Del puerto salió el Coloso, la máquina de guerra que guardaban para el final. Viene a la Plaza Mayor. Es ahora o nunca.",
+            place: "Plaza Mayor · 18:30",
+            hour: 18.5,
+            par: 360.0,
+            start: v(sx(5), 0.16, sz(4)),
+            steps: vec![
+                step("Llegá a la Plaza Mayor", Reach { pos: plaza, r: 18.0 })
+                    .act(Squad { at: v(sx(6), 0.16, sz(4)), n: 2, role: Role::Patrol, op: None, hunt: true, target: false, yaw: None })
+                    .act(Hunters { at: v(pm.x, 24.0, pm.y - 30.0), n: 2 })
+                    .say(&[vera("Lo vemos en el radar: grande, lento y blindado. Va hacia la Plaza Mayor."), vera("Tenés el lanzagranadas y el riel. Usalos.")]),
+                step("Derribá al Coloso", KillTargets)
+                    .cp(v(pm.x - 14.0, 0.16, pm.y + 10.0))
+                    .act(Boss { at: plaza + Vec3::Y * 14.0, hp: 220.0 })
+                    .act(Squad { at: v(sx(7), 0.16, sz(5)), n: 3, role: Role::Patrol, op: None, hunt: true, target: false, yaw: None })
+                    .say(&[(ENEMY, "Coloso en posición. Limpien la plaza."), vera("¡Ahí está! Apuntale al núcleo rojo: los críticos le hacen el doble.")]),
+                step("Aguantá hasta que llegue la ayuda", Hold { pos: plaza, r: 20.0, secs: 35.0, every: 8.0, n: 3, op: None })
+                    .say(&[vera("¡Cayó! Los que quedan vienen todos juntos. Treinta y cinco segundos más.")]),
+            ],
+            outro: vec![vera("Se terminó. De verdad, esta vez."), vera("El Distrito Sur es libre. Gracias por todo."), ("CRÉDITOS", "Arena Cero · hecho en Rust + Bevy · gracias por jugar")],
         });
     }
     v_ops
@@ -519,7 +606,7 @@ impl Game {
         let defs = ops(&c);
         let def = defs[op].clone();
         // efectos de las operaciones anteriores
-        let order = [None, Some(OutpostId::Antena), Some(OutpostId::Sub), Some(OutpostId::Datos), Some(OutpostId::Arsenal), Some(OutpostId::Obra), Some(OutpostId::Trenes), Some(OutpostId::Mando)];
+        let order = [None, Some(OutpostId::Antena), Some(OutpostId::Sub), Some(OutpostId::Datos), Some(OutpostId::Arsenal), Some(OutpostId::Obra), Some(OutpostId::Trenes), Some(OutpostId::Mando), None, None];
         if let Some(run) = g.city.as_mut() {
             for id in order[..op].iter().flatten() {
                 let (oi, o) = op_of(&c, *id);
@@ -611,7 +698,7 @@ impl Game {
         };
         c.limit_left = s.limit;
         // los objetivos siguen de un paso al otro, salvo que el paso traiga nuevos
-        if s.actions.iter().any(|a| matches!(a, Action::Squad { target: true, .. } | Action::WreckSquad { commander: true, .. })) {
+        if s.actions.iter().any(|a| matches!(a, Action::Squad { target: true, .. } | Action::WreckSquad { commander: true, .. } | Action::Boss { .. })) {
             c.targets.clear();
         }
         if s.actions.iter().any(|a| matches!(a, Action::Cars { target: true, .. })) {
@@ -737,6 +824,20 @@ impl Game {
                 self.events.push(GameEvent::Shake(0.8));
             }
             Action::Blackout(b) => self.blackout = *b,
+            Action::Boss { at, hp } => {
+                let id = self.next_id();
+                let mut e = new_drone(id, DroneKind::Boss, *at, 0, &mut self.rng);
+                e.hunting = true;
+                e.hp = *hp;
+                e.max_hp = *hp;
+                e.tagged = true;
+                self.enemies.push(e);
+                self.boss = Some(id);
+                if let Some(cp) = self.campaign.as_mut() {
+                    cp.step_enemies.push(id);
+                    cp.targets.push(id);
+                }
+            }
             Action::Refill => self.events.push(GameEvent::Refill),
         }
     }

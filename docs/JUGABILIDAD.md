@@ -44,7 +44,9 @@ En la ciudad, al llegar a una esquina aparecen los **nombres de las calles**.
 
 ## Campaña de operaciones
 
-Vera, la operadora, guía por radio (panel cian a la izquierda; las líneas enemigas salen en rojo).
+Antes de cada operación hay un **briefing**: qué hay que hacer, dónde y un mapa con el inicio (cian) y los
+lugares de la operación (dorado); Enter la empieza. Vera, la operadora, guía por radio (panel con su retrato a la
+izquierda; las líneas enemigas salen en rojo con una silueta con casco).
 Arriba a la izquierda está el **objetivo actual** con su progreso y, si corre, el tiempo; en
 pantalla y en la brújula, el marcador dorado con el número del paso.
 
@@ -57,7 +59,9 @@ pantalla y en la brújula, el marcador dorado con el número del paso.
 | 5 | Arsenal | Un camión cruza con el código: **detenerlo** antes de que termine su ruta, tomar el código, forzar el arsenal, escapar de dos patrullas. |
 | 6 | La grúa | Trepar a la cabina (40 m), hackearla, **marcar con T** a 5 cabecillas y eliminarlos. |
 | 7 | Trenes | Cargas en 3 tanques y en el depósito, escape con perseguidores y huida **en subte**. |
-| 8 | Mando | Asalto, el comandante huye en **blindado**, persecución, eliminarlo y **extracción** en la Plaza Mayor (40 s). |
+| 8 | Mando | Asalto a la Casa de Gobierno, el comandante huye en **blindado**, persecución, eliminarlo y **extracción** en el Parque (40 s). |
+| 9 | Nueve de Julio | Desactivar 3 cargas en el **Obelisco** en menos de 100 s y defender la avenida 45 s. |
+| 10 | El Coloso | Jefe final: el **Coloso** llega a la Plaza Mayor; derribarlo y aguantar 35 s. Créditos. |
 
 - En la campaña no hay patrullas, botín, campamentos ni misiones del director; sí tránsito y peatones.
   Cada puesto aparece recién cuando empieza su operación, y la hora queda fija.
