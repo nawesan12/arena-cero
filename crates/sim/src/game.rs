@@ -58,7 +58,8 @@ pub enum Mark {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum GameEvent {
-    Hurt { dmg: f32, from: Option<Vec3> },
+    /// Daño a un jugador (`to`: índice en la lista de objetivos del paso).
+    Hurt { dmg: f32, from: Option<Vec3>, to: u8 },
     Sound(Snd),
     Burst { pos: Vec3, color: u32, n: u32, speed: f32, life: f32 },
     Tracer { a: Vec3, b: Vec3, color: u32, life: f32 },
@@ -202,6 +203,8 @@ pub struct Game {
     pub blackout: bool,
     /// Dentro de una explosión (los que mueren salen despedidos).
     blasting: bool,
+    /// Jugadores de este paso (cooperativo: uno por jugador; en solitario, uno).
+    pub targets: Vec<Target>,
 }
 
 impl Game {
@@ -252,6 +255,7 @@ impl Game {
             takedowns: 0,
             blackout: false,
             blasting: false,
+            targets: Vec::new(),
         };
         if let Some(c) = level.city.as_ref() {
             let n_st = c.stations.len();
@@ -747,11 +751,17 @@ impl Game {
                 self.damage_vehicle(vi, dmg, level, body.unwrap_or(x.pos));
             }
         }
-        if let Some(body) = body {
-            let pd = (body - Vec3::Y * 0.3).distance(x.pos);
-            self.ev(GameEvent::Shake((if x.big { 0.9 } else { 0.4 }) * (1.0 - pd / 20.0).max(0.0)));
-            if x.self_dmg > 0.0 && pd < x.radius {
-                self.ev(GameEvent::Hurt { dmg: (x.self_dmg * (1.0 - pd / x.radius)).round(), from: Some(x.pos) });
+        if body.is_some() {
+            // a todos los jugadores (en solitario, el único)
+            let bodies: Vec<Vec3> = if self.targets.is_empty() { body.into_iter().collect() } else { self.targets.iter().map(|t| t.body).collect() };
+            for (k, b) in bodies.into_iter().enumerate() {
+                let pd = (b - Vec3::Y * 0.3).distance(x.pos);
+                if k == 0 {
+                    self.ev(GameEvent::Shake((if x.big { 0.9 } else { 0.4 }) * (1.0 - pd / 20.0).max(0.0)));
+                }
+                if x.self_dmg > 0.0 && pd < x.radius {
+                    self.ev(GameEvent::Hurt { dmg: (x.self_dmg * (1.0 - pd / x.radius)).round(), from: Some(x.pos), to: k as u8 });
+                }
             }
         }
     }
@@ -857,6 +867,13 @@ impl Game {
     /* ---------- paso ---------- */
 
     pub fn step(&mut self, level: &mut Level, t: &Target, hp_full: bool, dt: f32) {
+        self.step_multi(level, &[*t], &[hp_full], dt);
+    }
+
+    /// Un paso con varios jugadores (cooperativo). `ts[0]` es el anfitrión.
+    pub fn step_multi(&mut self, level: &mut Level, ts: &[Target], hp_full: &[bool], dt: f32) {
+        self.targets = ts.to_vec();
+        let t = &ts[0];
         self.time += dt;
         if self.combo_t > 0.0 {
             self.combo_t -= dt;
@@ -868,8 +885,8 @@ impl Game {
             Mode::City => self.step_city(level, t, dt),
             Mode::Waves => self.step_waves(level, t, dt),
         }
-        self.step_enemies(level, t, dt);
-        self.step_shots(level, t, dt);
+        self.step_enemies(level, ts, dt);
+        self.step_shots(level, ts, dt);
         // granadas (las del jugador las mete el arsenal en `nades`)
         let mut wev = Vec::new();
         let enemies = &self.enemies;
@@ -888,8 +905,8 @@ impl Game {
         self.step_gadgets(dt);
         self.step_people(level, t.pos, dt);
         self.step_director(level, t.pos, dt);
-        self.step_trains(level, Vec3::new(t.pos.x, t.feet, t.pos.z), dt);
-        self.step_enemy_cars(level, t.pos, t.body, t.light, dt);
+        self.step_trains(level, dt);
+        self.step_enemy_cars(level, dt);
         // cadáveres que caen: el envión del golpe los arrastra (sin atravesar paredes)
         for c in &mut self.corpses {
             if c.t < 0.7 {
@@ -913,8 +930,8 @@ impl Game {
         let mut picked = Vec::new();
         for (i, o) in self.orbs.iter_mut().enumerate() {
             o.life -= dt;
-            let near = (o.pos.x - t.pos.x).hypot(o.pos.z - t.pos.z) < 1.4;
-            if near && (o.od || !hp_full) {
+            let near = ts.iter().zip(hp_full).any(|(t, full)| (o.pos.x - t.pos.x).hypot(o.pos.z - t.pos.z) < 1.4 && (o.od || !full));
+            if near {
                 picked.push(i);
             }
         }
@@ -1023,10 +1040,12 @@ impl Game {
         }
     }
 
-    fn step_enemies(&mut self, level: &mut Level, t: &Target, dt: f32) {
+    fn step_enemies(&mut self, level: &mut Level, ts: &[Target], dt: f32) {
         let outposts: &[crate::city::Outpost] = level.city.as_ref().map_or(&[], |c| &c.outposts);
         let smokes = self.smoke_spheres();
-        let ctx = Ctx { world: &level.world, outposts, nav: &self.nav, t, time: self.time, dt, smokes: &smokes, night: self.director.night() };
+        let night = self.director.night();
+        // cada enemigo se ocupa del jugador más cercano
+        let pick: Vec<usize> = self.enemies.iter().map(|e| (0..ts.len()).min_by(|&a, &b| ts[a].pos.distance_squared(e.pos).total_cmp(&ts[b].pos.distance_squared(e.pos))).unwrap_or(0)).collect();
         let powered = self.city.as_ref().is_none_or(|c| c.powered);
         let lim = level.world.lim();
         let drone_pos: Vec<Vec3> = self.enemies.iter().map(|e| if e.drone().is_some() && e.surv.is_none() { e.pos } else { Vec3::splat(1e6) }).collect();
@@ -1037,6 +1056,8 @@ impl Game {
             }
         }
         let mut ev = Vec::new();
+        // a qué jugador va cada evento de la IA
+        let mut who: Vec<u8> = Vec::new();
         let mut empty_ops: Vec<OpState> = Vec::new();
         let ops = self.city.as_mut().map_or(&mut empty_ops, |c| &mut c.ops);
         for i in 0..self.enemies.len() {
@@ -1044,6 +1065,9 @@ impl Game {
             if !e.alive() {
                 continue;
             }
+            let k = pick[i];
+            let ctx = Ctx { world: &level.world, outposts, nav: &self.nav, t: &ts[k], time: self.time, dt, smokes: &smokes, night };
+            let before = ev.len();
             match e.kind {
                 Kind::Soldier(_) => {
                     let mine = e.op.map_or(0, |o| shooters[o]).saturating_sub(u32::from(e.burst > 0));
@@ -1055,13 +1079,16 @@ impl Game {
                 }
                 Kind::Drone(_) => update_drone(e, i, &ctx, &drone_pos, self.wave, lim, &mut self.rng, &mut ev),
             }
+            who.resize(ev.len(), k as u8);
+            let _ = before;
         }
-        for a in ev {
+        for (a, pk) in ev.into_iter().zip(who) {
+            let t = &ts[pk as usize];
             match a {
                 AiEvent::Shot { from, to, hit, dmg, big } => {
                     let d = from.distance(t.body);
                     if hit {
-                        self.ev(GameEvent::Hurt { dmg, from: Some(from) });
+                        self.ev(GameEvent::Hurt { dmg, from: Some(from), to: pk });
                     } else if d < 30.0 {
                         self.ev(GameEvent::Sound(Snd::Whiz));
                     }
@@ -1089,7 +1116,7 @@ impl Game {
                             e.hp = 0.0;
                             let p = e.pos;
                             self.explode(Explosion { pos: p, radius: 2.5, max_dmg: 2.0, self_dmg: 0.0, big: true, enemy: true }, Some(t.body), level);
-                            self.ev(GameEvent::Hurt { dmg: 14.0, from: Some(p) });
+                            self.ev(GameEvent::Hurt { dmg: 14.0, from: Some(p), to: pk });
                         }
                     }
                 }
@@ -1097,7 +1124,7 @@ impl Game {
         }
     }
 
-    fn step_shots(&mut self, level: &Level, t: &Target, dt: f32) {
+    fn step_shots(&mut self, level: &Level, ts: &[Target], dt: f32) {
         let mut i = 0;
         while i < self.shots.len() {
             let s = &mut self.shots[i];
@@ -1108,9 +1135,9 @@ impl Game {
                 self.shots.swap_remove(i);
                 continue;
             }
-            if pos.distance_squared(t.body) < 0.45 {
+            if let Some(k) = ts.iter().position(|t| pos.distance_squared(t.body) < 0.45) {
                 self.burst(pos, 0xff3d5a, 8, 4.0, 0.3);
-                self.ev(GameEvent::Hurt { dmg, from: Some(from) });
+                self.ev(GameEvent::Hurt { dmg, from: Some(from), to: k as u8 });
                 self.shots.swap_remove(i);
                 continue;
             }
@@ -1272,7 +1299,7 @@ impl Game {
             self.events.push(GameEvent::Sound(Snd::Crash));
             self.make_noise(v.pos, 40.0);
             if impact > 22.0 {
-                self.events.push(GameEvent::Hurt { dmg: ((impact - 20.0) * 1.5).round(), from: None });
+                self.events.push(GameEvent::Hurt { dmg: ((impact - 20.0) * 1.5).round(), from: None, to: 0 });
             }
         }
         // atropellos: soldados delante o al costado del auto, a más de 6 m/s

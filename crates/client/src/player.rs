@@ -405,7 +405,9 @@ fn step_player(
     }
     for e in std::mem::take(&mut game.events) {
         match e {
-            GameEvent::Hurt { dmg, from } => lp.hurt(dmg, from),
+            // en solitario el jugador local es el 0; en cooperativo, el índice propio
+            GameEvent::Hurt { dmg, from, to } if to == 0 => lp.hurt(dmg, from),
+            GameEvent::Hurt { .. } => {}
             GameEvent::Sound(x) => match x {
                 Snd::EShot { dist, big, at } => snd.play_at(if big { S::EShotBig } else { S::EShot }, ((if big { 0.5 } else { 0.25 }) - dist * 0.005).max(0.02), at),
                 Snd::Enemy { dist, at } => snd.play_at(S::Enemy, (0.14 - dist * 0.004).max(0.02), at),

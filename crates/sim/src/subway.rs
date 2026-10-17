@@ -66,8 +66,9 @@ impl Game {
         }
     }
 
-    pub(crate) fn step_trains(&mut self, level: &mut Level, player_feet: Vec3, dt: f32) {
+    pub(crate) fn step_trains(&mut self, level: &mut Level, dt: f32) {
         let Some(c) = level.city.as_ref() else { return };
+        let feet: Vec<Vec3> = self.targets.iter().map(|t| Vec3::new(t.pos.x, t.feet, t.pos.z)).collect();
         let tracks: Vec<Vec3> = c.stations.iter().map(|s| s.track).collect();
         for (i, tr) in self.trains.iter_mut().enumerate() {
             let before = offset(tr.t);
@@ -79,14 +80,16 @@ impl Game {
             let p = tracks[i] + Vec3::X * dx;
             tr.col = Some(level.world.add_collider(p.x, p.z, LEN, HEIGHT, WIDTH, p.y + 0.3));
             // pitido al entrar en la estación
-            if before.is_none() && p.distance(player_feet) < 90.0 {
+            if before.is_none() && feet.first().is_some_and(|f| p.distance(*f) < 90.0) {
                 self.events.push(GameEvent::Sound(crate::game::Snd::Train));
             }
             // si te agarra en las vías
             let moving = before.is_some_and(|b| (b - dx).abs() > 0.01);
-            let rel = player_feet - p;
-            if moving && rel.x.abs() < LEN / 2.0 + 0.5 && rel.z.abs() < WIDTH / 2.0 + 0.4 && rel.y < HEIGHT {
-                self.events.push(GameEvent::Hurt { dmg: 200.0, from: Some(p) });
+            for (k, f) in feet.iter().enumerate() {
+                let rel = *f - p;
+                if moving && rel.x.abs() < LEN / 2.0 + 0.5 && rel.z.abs() < WIDTH / 2.0 + 0.4 && rel.y < HEIGHT {
+                    self.events.push(GameEvent::Hurt { dmg: 200.0, from: Some(p), to: k as u8 });
+                }
             }
         }
     }

@@ -148,13 +148,21 @@ impl Game {
     }
 
     /// Autos enemigos: manejar, ver al jugador, bajar tripulación, convoyes que llegan.
-    pub(crate) fn step_enemy_cars(&mut self, level: &mut Level, player: Vec3, body: Vec3, light: bool, dt: f32) {
+    pub(crate) fn step_enemy_cars(&mut self, level: &mut Level, dt: f32) {
         let night = self.director.night();
-        let range = 35.0 * (1.0 - 0.45 * night * if light { 0.2 } else { 1.0 });
+        let ts = self.targets.clone();
+        if ts.is_empty() {
+            return;
+        }
         for vi in 0..self.vehicles.len() {
             if self.vehicles[vi].ai.is_none() || self.vehicles[vi].wrecked || Some(vi) == self.driving {
                 continue;
             }
+            // cada auto se ocupa del jugador más cercano
+            let vpos = self.vehicles[vi].pos;
+            let t = ts.iter().min_by(|a, b| a.pos.distance_squared(vpos).total_cmp(&b.pos.distance_squared(vpos))).unwrap();
+            let (player, body, light) = (t.pos, t.body, t.light);
+            let range = 35.0 * (1.0 - 0.45 * night * if light { 0.2 } else { 1.0 });
             let v = &self.vehicles[vi];
             let eye = v.pos + Vec3::Y * 1.5;
             let civil = v.ai.as_ref().is_some_and(|a| a.civil);
@@ -183,15 +191,19 @@ impl Game {
                 }
                 AiOut::None => {}
             }
-            // atropella al jugador
-            let v = &self.vehicles[vi];
-            if v.speed.abs() > 6.0 && self.driving.is_none() {
-                let rel = player - v.pos;
-                if rel.dot(v.forward()).abs() < 2.6 && rel.dot(v.right()).abs() < 1.4 && (player.y - 1.6 - v.pos.y).abs() < 1.5 {
-                    self.events.push(GameEvent::Hurt { dmg: 25.0, from: Some(v.pos) });
-                    self.events.push(GameEvent::Shake(0.7));
-                    let s = v.speed;
-                    self.vehicles[vi].speed = s * 0.3;
+            // atropella a los jugadores que estén a pie
+            for (k, t) in ts.iter().enumerate() {
+                let v = &self.vehicles[vi];
+                if v.speed.abs() > 6.0 && !(k == 0 && self.driving.is_some()) {
+                    let rel = t.pos - v.pos;
+                    if rel.dot(v.forward()).abs() < 2.6 && rel.dot(v.right()).abs() < 1.4 && (t.pos.y - 1.6 - v.pos.y).abs() < 1.5 {
+                        self.events.push(GameEvent::Hurt { dmg: 25.0, from: Some(v.pos), to: k as u8 });
+                        if k == 0 {
+                            self.events.push(GameEvent::Shake(0.7));
+                        }
+                        let s = v.speed;
+                        self.vehicles[vi].speed = s * 0.3;
+                    }
                 }
             }
         }
