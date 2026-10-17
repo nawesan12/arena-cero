@@ -38,6 +38,8 @@ pub enum Snd {
     Beep,
     Tag,
     Crash,
+    Decoy,
+    Toss,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -73,6 +75,10 @@ pub enum GameEvent {
     WaveCleared,
     /// El jugador se bajó del auto (el cliente lo ubica al costado).
     ExitVehicle,
+    /// Créditos ganados.
+    Credits { amount: u32, label: &'static str },
+    /// Caja con munición o granadas: lo aplica el cliente.
+    Loot(crate::economy::LootKind),
     /// Puntos ganados (para el "+120" junto a la mira).
     Score { points: u32, label: &'static str },
 }
@@ -141,6 +147,15 @@ pub struct Game {
     /// Auto que maneja el jugador.
     pub driving: Option<usize>,
     engine_noise_t: f32,
+    pub credits: u32,
+    pub loot: Vec<crate::economy::Loot>,
+    /// Cantidad de humo, señuelo y dron explorador.
+    pub gadgets: [u32; 3],
+    pub gadget_sel: usize,
+    pub smokes: Vec<crate::economy::Smoke>,
+    pub decoys: Vec<crate::economy::Decoy>,
+    pub scouts: Vec<crate::economy::Scout>,
+    pub director: crate::director::Director,
 }
 
 impl Game {
@@ -172,11 +187,25 @@ impl Game {
             vehicles: Vec::new(),
             driving: None,
             engine_noise_t: 0.0,
+            credits: 0,
+            loot: Vec::new(),
+            gadgets: [1, 1, 0],
+            gadget_sel: 0,
+            smokes: Vec::new(),
+            decoys: Vec::new(),
+            scouts: Vec::new(),
+            director: Default::default(),
         };
         if let Some(c) = level.city.as_ref() {
             g.init_city(c.clone(), &mut level.world);
+            g.place_loot(level, 80);
+            g.spawn_patrols(level, 6);
         }
         g
+    }
+
+    pub(crate) fn next_id(&mut self) -> u32 {
+        self.id()
     }
 
     fn id(&mut self) -> u32 {
@@ -479,7 +508,11 @@ impl Game {
                 let stealth = e.op.and_then(|o| self.city.as_ref().map(|c| c.ops[o].alarm <= 0.0)).unwrap_or(false);
                 let pts = e.value + if stealth { 60 } else { 0 };
                 self.score += pts;
-                self.events.push(GameEvent::Score { points: pts, label: if stealth { "BAJA SILENCIOSA" } else if sk == SoldierKind::Commander { "COMANDANTE" } else { "BAJA" } });
+                let label = if stealth { "BAJA SILENCIOSA" } else if sk == SoldierKind::Commander { "COMANDANTE" } else { "BAJA" };
+                self.events.push(GameEvent::Score { points: pts, label });
+                if self.city.is_some() {
+                    self.add_credits(crate::economy::bounty(label), label);
+                }
                 if stealth {
                     if let Some(c) = self.city.as_mut() {
                         c.stealth_kills += 1;
@@ -500,6 +533,7 @@ impl Game {
             Kind::Turret => {
                 self.score += e.value;
                 self.events.push(GameEvent::Score { points: e.value, label: "TORRETA" });
+                self.add_credits(50, "TORRETA");
                 if let Some(c) = self.city.as_mut() {
                     if let Some(k) = c.turret_cols.iter().position(|t| t.0 == e.id) {
                         let (_, col) = c.turret_cols.remove(k);
@@ -538,6 +572,7 @@ impl Game {
                 _ => false,
             };
             if newly {
+                self.add_credits(250, "PUESTO DESPEJADO");
                 let full = level.city.as_ref().map_or("", |c| c.outposts[op].full).to_string();
                 self.banner("PUESTO DESPEJADO", format!("{full}: ahora es punto de reabastecimiento"));
             }
@@ -582,6 +617,14 @@ impl Game {
                 self.damage(i, dmg, Some(dir), false, b, level);
             }
         }
+        for vi in 0..self.vehicles.len() {
+            let v = &self.vehicles[vi];
+            let d = (v.pos + Vec3::Y).distance(x.pos);
+            if !v.wrecked && d < x.radius + 2.0 {
+                let dmg = x.max_dmg * 3.0 * (1.0 - d / (x.radius + 2.0));
+                self.damage_vehicle(vi, dmg, level, body.unwrap_or(x.pos));
+            }
+        }
         if let Some(body) = body {
             let pd = (body - Vec3::Y * 0.3).distance(x.pos);
             self.ev(GameEvent::Shake((if x.big { 0.9 } else { 0.4 }) * (1.0 - pd / 20.0).max(0.0)));
@@ -597,7 +640,27 @@ impl Game {
         let (mut any_hit, mut any_kill, mut any_crit) = (false, false, false);
         let tracer_color = if pierce { 0x5fd8ff } else { 0xffc66a };
         for (k, p) in pellets.iter().enumerate() {
-            let wt = level.world.ray(p.origin, p.dir, 120.0);
+            let mut wt = level.world.ray(p.origin, p.dir, 120.0);
+            // los autos tapan las balas (y el riel les pega igual)
+            let mut car_hit: Option<(usize, f32)> = None;
+            for (vi, v) in self.vehicles.iter().enumerate() {
+                if Some(vi) == self.driving || (v.pos - p.origin).length() > wt + 4.0 {
+                    continue;
+                }
+                if let Some(t) = ray_obb(p.origin, p.dir, v.pos + Vec3::Y * 0.8, Vec3::new(0.95, 0.8, 2.15), v.yaw) {
+                    if t < wt && car_hit.is_none_or(|c| t < c.1) {
+                        car_hit = Some((vi, t));
+                    }
+                }
+            }
+            if let Some((vi, t)) = car_hit {
+                wt = t;
+                let hp_before = self.vehicles[vi].hp;
+                self.damage_vehicle(vi, dmg, level, body);
+                if hp_before > 0.0 && !self.vehicles[vi].wrecked {
+                    any_hit = true;
+                }
+            }
             let hits = ray_enemies(&self.enemies, p.origin, p.dir, wt, p.origin);
             let mut end: Option<Vec3> = None;
             let mut seen: Vec<usize> = Vec::new();
@@ -676,10 +739,17 @@ impl Game {
         for e in wev {
             match e {
                 WeaponEvent::Explosion(x) => self.explode(x, Some(t.body), level),
-                WeaponEvent::Beep => {}
+                WeaponEvent::Gadget { kind: crate::weapons::NadeKind::Smoke, pos } => {
+                    self.smokes.push(crate::economy::Smoke { pos, r: 1.5, life: 12.0 });
+                    self.events.push(GameEvent::Sound(Snd::Toss));
+                }
+                WeaponEvent::Gadget { pos, .. } => self.decoys.push(crate::economy::Decoy { pos, life: 10.0, beep: 0.0 }),
                 _ => {}
             }
         }
+        self.step_gadgets(dt);
+        self.step_director(level, t.pos, dt);
+        self.step_enemy_cars(level, t.pos, t.body, t.light, dt);
         // cadáveres que caen
         for c in &mut self.corpses {
             if c.t < 0.5 {
@@ -804,7 +874,8 @@ impl Game {
 
     fn step_enemies(&mut self, level: &mut Level, t: &Target, dt: f32) {
         let outposts: &[crate::city::Outpost] = level.city.as_ref().map_or(&[], |c| &c.outposts);
-        let ctx = Ctx { world: &level.world, outposts, nav: &self.nav, t, time: self.time, dt };
+        let smokes = self.smoke_spheres();
+        let ctx = Ctx { world: &level.world, outposts, nav: &self.nav, t, time: self.time, dt, smokes: &smokes, night: self.director.night() };
         let powered = self.city.as_ref().is_none_or(|c| c.powered);
         let lim = level.world.lim();
         let drone_pos: Vec<Vec3> = self.enemies.iter().map(|e| if e.drone().is_some() && e.surv.is_none() { e.pos } else { Vec3::splat(1e6) }).collect();
@@ -916,7 +987,7 @@ mod tests {
     use crate::maps::{MapId, build_level};
 
     fn target(x: f32, z: f32) -> Target {
-        Target { pos: Vec3::new(x, 1.6, z), body: Vec3::new(x, 1.1, z), vel: Vec3::ZERO, feet: 0.0, crouch_t: 0.0, evasive: false }
+        Target { pos: Vec3::new(x, 1.6, z), body: Vec3::new(x, 1.1, z), vel: Vec3::ZERO, feet: 0.0, crouch_t: 0.0, evasive: false, light: false }
     }
 
     #[test]
@@ -926,9 +997,10 @@ mod tests {
         let soldiers = g.enemies.iter().filter(|e| e.is_soldier()).count();
         let turrets = g.enemies.iter().filter(|e| e.is_turret()).count();
         // antena 4+1 francotirador, subestación 4, oficinas 4+1, arsenal 4, mando 5+1, obra 4+2, trenes 4+1
-        assert_eq!(soldiers, 5 + 4 + 5 + 4 + 6 + 6 + 5);
-        assert_eq!(turrets, 1 + 2 + 1 + 1 + 2 + 1 + 2);
-        assert_eq!(g.enemies.iter().filter(|e| e.surv.is_some()).count(), 5);
+        // más 6 campamentos de 4 soldados (3 con francotirador)
+        assert_eq!(soldiers, 5 + 4 + 5 + 4 + 6 + 6 + 5 + 6 * 4 + 3);
+        assert_eq!(turrets, 1 + 2 + 1 + 1 + 2 + 1 + 2 + 6);
+        assert_eq!(g.enemies.iter().filter(|e| e.surv.is_some()).count(), 9);
     }
 
     #[test]

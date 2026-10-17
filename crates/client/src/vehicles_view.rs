@@ -34,6 +34,9 @@ fn sync(
     mut seen_gen: Local<u32>,
     mut roots: Query<(&mut Transform, &CarRig)>,
     mut wheels: Query<&mut Transform, Without<CarRig>>,
+    kids: Query<&Children, With<CarRig>>,
+    mut car_mats: Query<&mut MeshMaterial3d<StandardMaterial>>,
+    mut wrecked: Local<Vec<u32>>,
 ) {
     let g = &game.0;
     if *seen_gen != game.1 {
@@ -41,6 +44,7 @@ fn sync(
         for (_, e) in known.drain() {
             commands.entity(e).despawn();
         }
+        wrecked.clear();
     }
     let (cube, wheel, m) = assets.get_or_insert_with(|| {
         let pbr = |c: u32, metal: f32, rough: f32| StandardMaterial { base_color: crate::world_render::col(c), metallic: metal, perceptual_roughness: rough, ..default() };
@@ -50,6 +54,7 @@ fn sync(
         list.push(mats.add(StandardMaterial { base_color: crate::world_render::col(0xfff2d0), unlit: true, ..default() })); // 8: faro
         list.push(mats.add(StandardMaterial { base_color: crate::world_render::col(0xff3d5a), unlit: true, ..default() })); // 9: luz trasera
         list.push(mats.add(pbr(0x8a959c, 0.7, 0.3))); // 10: llanta
+        list.push(mats.add(pbr(0x1b1a19, 0.2, 0.95))); // 11: chatarra quemada
         let mut w = Cylinder::new(0.36, 0.26).mesh().resolution(14).build();
         w.rotate_by(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2));
         (meshes.add(Cuboid::new(1.0, 1.0, 1.0)), meshes.add(w), list)
@@ -90,6 +95,17 @@ fn sync(
     }
     for v in &g.vehicles {
         let Some(&e) = known.get(&v.id) else { continue };
+        if v.wrecked && !wrecked.contains(&v.id) {
+            // destruido: carrocería quemada
+            wrecked.push(v.id);
+            if let Ok(children) = kids.get(e) {
+                for c in children.iter() {
+                    if let Ok(mut mm) = car_mats.get_mut(c) {
+                        mm.0 = m[11].clone();
+                    }
+                }
+            }
+        }
         let Ok((mut t, rig)) = roots.get_mut(e) else { continue };
         t.translation = v.pos;
         t.rotation = Quat::from_rotation_y(v.yaw);
@@ -116,10 +132,10 @@ fn engine(mut commands: Commands, game: Res<GameRes>, sounds: Option<Res<crate::
     }
     let g = &game.0;
     let speed = g.driving.and_then(|i| g.vehicles.get(i)).map(|v| v.speed.abs());
-    let target = if speed.is_some() { 0.35 } else { 0.0 };
+    let target = if speed.is_some() { 0.12 } else { 0.0 };
     *vol += (target - *vol) * (time.delta_secs() * 4.0).min(1.0);
     for mut sink in &mut q {
         sink.set_volume(Volume::Linear(*vol));
-        sink.set_speed(0.7 + speed.unwrap_or(0.0) / 30.0 * 1.3);
+        sink.set_speed(0.8 + speed.unwrap_or(0.0) / 30.0 * 0.7);
     }
 }

@@ -5,7 +5,7 @@ use crate::game::GameRes;
 use crate::hud::Fonts;
 use crate::player::{LocalPlayer, Look};
 use crate::world_render::LevelRes;
-use arena_sim::city::{BC, BLOCK};
+use arena_sim::city::{BC_ALL, BLOCK};
 use arena_sim::enemies::Alert;
 use bevy::prelude::*;
 
@@ -53,8 +53,8 @@ fn plan(level: &arena_sim::Level) -> Image {
         }
     };
     if level.info.city {
-        for bx in BC {
-            for bz in BC {
+        for bx in BC_ALL {
+            for bz in BC_ALL {
                 rect(bx - BLOCK / 2.0, bz - BLOCK / 2.0, bx + BLOCK / 2.0, bz + BLOCK / 2.0, [0.196, 0.231, 0.251, 1.0]);
             }
         }
@@ -115,7 +115,7 @@ fn update(
     mut dots: Query<(&Dot, &mut Node, &mut Visibility, &mut BackgroundColor), (Without<OpBox>, Without<OpLabel>, Without<Me>)>,
     mut me: Query<(&mut Node, &mut UiTransform), (With<Me>, Without<Dot>, Without<OpBox>, Without<OpLabel>)>,
 ) {
-    let open = key.pressed(KeyCode::Tab) && level.0.info.city;
+    let open = (key.pressed(KeyCode::Tab) || std::env::var_os("ARENA_TAB").is_some()) && level.0.info.city;
     for mut v in &mut root {
         *v = if open { Visibility::Inherited } else { Visibility::Hidden };
     }

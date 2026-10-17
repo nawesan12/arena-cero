@@ -129,9 +129,9 @@ pub fn info(id: MapId) -> MapInfo {
         MapId::Ciudad => MapInfo {
             id,
             name: "Distrito Sur",
-            size: "330 m",
-            desc: "Siete puestos en un barrio enorme: autopista elevada, torres con pasarelas, obra con grúa, patio de trenes y edificios para recorrer piso por piso.",
-            a: 164.0,
+            size: "590 m",
+            desc: "Siete puestos en el centro y cuatro barrios alrededor: puerto, centro financiero, barrio jardín y el cerro. Autopistas, torres con pasarelas, campamentos y autos para manejar.",
+            a: 296.0,
             start: [-132.0, 154.0],
             bg: 0xa9c6dc,
             fog: [120.0, 330.0],

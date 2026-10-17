@@ -68,6 +68,10 @@ enum T {
     Popup,
     PopupLabel,
     Slot(usize),
+    Credits,
+    CreditPop,
+    Clock,
+    Gadget,
 }
 
 #[derive(Component)]
@@ -279,6 +283,7 @@ fn spawn_hud(mut commands: Commands, mut font_assets: ResMut<Assets<Font>>, mut 
     commands.spawn(Node { position_type: PositionType::Absolute, left: px(18), top: px(16), flex_direction: FlexDirection::Column, row_gap: px(6), ..default() }).with_children(|p| {
         p.spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Baseline, column_gap: px(8), ..default() }).with_children(|r| {
             r.spawn((txt("", 28.0, AMBER, &f.display), T::Wave));
+            r.spawn((txt("", 22.0, INK, &f.mono), T::Clock));
             r.spawn((txt("", 13.0, DIM, &f.display), T::WaveSub));
         });
         p.spawn(Node { flex_direction: FlexDirection::Row, column_gap: px(9), ..default() }).with_children(|r| {
@@ -296,6 +301,8 @@ fn spawn_hud(mut commands: Commands, mut font_assets: ResMut<Assets<Font>>, mut 
     commands.spawn(Node { position_type: PositionType::Absolute, right: px(18), top: px(14), flex_direction: FlexDirection::Column, align_items: AlignItems::End, ..default() }).with_children(|p| {
         p.spawn((txt("0", 26.0, INK, &f.mono), T::Score));
         p.spawn((txt("", 18.0, AMBER, &f.display), T::Combo));
+        p.spawn((txt("", 18.0, AMBER, &f.mono), T::Credits));
+        p.spawn((txt("", 12.0, MINT, &f.display), T::CreditPop));
     });
 
     // cartel
@@ -315,6 +322,9 @@ fn spawn_hud(mut commands: Commands, mut font_assets: ResMut<Assets<Font>>, mut 
             });
         });
         p.spawn(Node { flex_direction: FlexDirection::Row, column_gap: px(8), ..default() }).with_children(|r| {
+            r.spawn((Node { height: px(32), padding: UiRect::axes(px(8), px(0)), flex_direction: FlexDirection::Column, justify_content: JustifyContent::Center, border: UiRect::all(px(1)), ..default() }, BorderColor::all(AMBER.with_alpha(0.6)))).with_children(|c| {
+                c.spawn((txt("V", 13.0, AMBER, &f.mono), T::Gadget));
+            });
             for (k, key, name) in [(0u8, "Q", "DASH"), (1, "E", "GANCHO"), (2, "C", "DESLIZAR")] {
                 r.spawn((Node { width: px(62), height: px(32), flex_direction: FlexDirection::Column, justify_content: JustifyContent::Center, align_items: AlignItems::Center, border: UiRect::all(px(1)), overflow: Overflow::clip(), ..default() }, BorderColor::all(CYAN.with_alpha(0.6)))).with_children(|c| {
                     c.spawn((Node { position_type: PositionType::Absolute, left: px(0), bottom: px(0), width: percent(100), height: percent(100), ..default() }, BackgroundColor(CYAN.with_alpha(0.22)), ChipFill(k)));
@@ -383,6 +393,9 @@ fn spawn_hud(mut commands: Commands, mut font_assets: ResMut<Assets<Font>>, mut 
                     ("F", "Usar · derribo por la espalda"),
                     ("T / RUEDA CLIC", "Marcar enemigo"),
                     ("TAB", "Mapa táctico (ciudad)"),
+                    ("B", "Tienda (en reabastecimiento)"),
+                    ("V / Z", "Usar / cambiar gadget"),
+                    ("L", "Linterna"),
                     ("M", "Música"),
                     ("F1 F2 F3", "Calidad baja · media · alta"),
                     ("F4", "Mostrar FPS"),
@@ -403,6 +416,7 @@ fn tick_feed(time: Res<Time>, mut ui: ResMut<UiFeed>) {
     ui.banner_t -= dt;
     ui.mark_t -= dt;
     ui.popup_t -= dt;
+    ui.credit_t -= dt;
     for n in &mut ui.nums {
         n.3 += dt;
     }
@@ -448,6 +462,7 @@ fn vitals(lp: Res<LocalPlayer>, time: Res<Time>, mut texts: Query<(&mut Text, &m
 
 #[allow(clippy::type_complexity)]
 fn weapon(
+    game: Res<GameRes>,
     lp: Res<LocalPlayer>,
     time: Res<Time>,
     mut swap_seen: Local<(usize, f32)>,
@@ -466,6 +481,27 @@ fn weapon(
         *swap_seen = (a.w, now);
     }
     let blink = (now * 6.0).sin() > 0.0;
+    let car = game.0.driving.and_then(|i| game.0.vehicles.get(i));
+    if let Some(v) = car {
+        for (mut t, mut c, k, bg) in &mut texts {
+            match *k {
+                T::Ammo => {
+                    set(&mut t, format!("{}", (v.speed.abs() * 3.6).round()));
+                    c.0 = INK;
+                }
+                T::Mag => set(&mut t, "KM/H".into()),
+                T::WName => set(&mut t, format!("AUTO · {}%", (v.hp / 60.0 * 100.0).clamp(0.0, 100.0).round())),
+                T::RKey => {
+                    c.0 = DARK.with_alpha(0.0);
+                    if let Some(mut b) = bg {
+                        b.0 = AMBER.with_alpha(0.0);
+                    }
+                }
+                _ => {}
+            }
+        }
+        return;
+    }
     for (mut t, mut c, k, bg) in &mut texts {
         match *k {
             T::Ammo => {
@@ -546,6 +582,27 @@ fn top(
             T::Alert => {
                 c.0 = alert_col;
                 set(&mut t, alert_txt.into());
+            }
+            T::Credits => set(&mut t, if city { format!("¢ {}", fmt_thousands(g.credits)) } else { String::new() }),
+            T::CreditPop => {
+                let a = (ui.credit_t / 0.4).clamp(0.0, 1.0);
+                c.0 = MINT.with_alpha(a);
+                set(&mut t, match (ui.credit, ui.credit_t > 0.0) {
+                    (Some((n, l)), true) => format!("+{n} ¢ · {l}"),
+                    _ => String::new(),
+                });
+            }
+            T::Clock => set(&mut t, if city {
+                let h = g.director.hour;
+                format!("{:02}:{:02}", h as u32, ((h.fract()) * 60.0) as u32 / 10 * 10)
+            } else {
+                String::new()
+            }),
+            T::Gadget => {
+                let gi = g.gadget_sel % 3;
+                let gd = arena_sim::economy::GADGETS[gi];
+                set(&mut t, if city { format!("V {} ×{}", gd.name().to_uppercase(), g.gadgets[gi]) } else { String::new() });
+                c.0 = if g.gadgets[gi] > 0 { AMBER } else { DIM };
             }
             T::Popup => {
                 c.0 = AMBER.with_alpha(popup_a);
@@ -635,11 +692,14 @@ fn compass(
     if let (Some(c), Some(run)) = (level.0.city.as_ref(), game.0.city.as_ref()) {
         for (i, op) in c.outposts.iter().enumerate() {
             let st = &run.ops[i];
-            if st.done {
+            if st.done || op.camp {
                 continue;
             }
             let p = op.obj_pos.unwrap_or(Vec3::new(op.cx, 0.0, op.cz));
             items.push((p, op.icon, if st.alarm > 0.0 { RED } else { AMBER }));
+        }
+        for m in &game.0.director.missions {
+            items.push((m.pos, '!', Color::srgb(1.0, 0.42, 0.18)));
         }
         items.push((c.safe_pos, '+', MINT));
         for (i, op) in c.outposts.iter().enumerate() {

@@ -386,21 +386,21 @@ const ALL: [S; 35] = [
 ];
 
 /// Motor: loop de 1 s con frecuencias enteras (fase continua al repetir). La velocidad de
-/// reproducción sube el tono según lo rápido que va el auto.
+/// reproducción sube un poco el tono según lo rápido que va el auto.
 fn engine_loop() -> Pcm {
+    // ronroneo grave y redondo: senoidales en 40 y 80 Hz con un pulso suave de cilindros,
+    // y apenas de ruido muy filtrado (antes tenía sierra y cuadrada: chillaba)
     let n = SR as usize;
     let mut out = vec![0.0f32; n];
-    let mut lp = Biquad::new(Filt::Low, 420.0, 0.9);
-    let mut bp = Biquad::new(Filt::Band, 180.0, 1.2);
+    let mut lp = Biquad::new(Filt::Low, 160.0, 0.7);
     let mut b = Buf::new(0.0);
     for (k, v) in out.iter_mut().enumerate() {
         let t = k as f32 / SR as f32;
-        let saw = 2.0 * (t * 55.0).fract() - 1.0;
-        let sq = if (t * 110.0).fract() < 0.5 { 1.0 } else { -1.0 };
-        let wob = 1.0 + (t * std::f32::consts::TAU * 6.0).sin() * 0.15;
-        *v = lp.run(saw * 0.5 + sq * 0.15) * wob + bp.run(b.white()) * 0.25;
+        let tau = std::f32::consts::TAU;
+        let base = (t * 40.0 * tau).sin() * 0.55 + (t * 80.0 * tau).sin() * 0.25;
+        let pulse = 0.75 + 0.25 * (t * 20.0 * tau).sin();
+        *v = base * pulse * 0.6 + lp.run(b.white()) * 0.12;
     }
-    // el filtro arranca en cero: copiar el final sobre el principio para que el loop no haga clic
     let fade = 400;
     for i in 0..fade {
         let k = i as f32 / fade as f32;

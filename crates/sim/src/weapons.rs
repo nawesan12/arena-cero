@@ -69,6 +69,8 @@ pub enum WeaponEvent {
     Noise { pos: Vec3, radius: f32 },
     Explosion(Explosion),
     Beep,
+    /// Humo o señuelo que se activa.
+    Gadget { kind: NadeKind, pos: Vec3 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -95,6 +97,18 @@ pub struct Nade {
     pub dmg: f32,
     /// Granada de un soldado.
     pub enemy: bool,
+    pub kind: NadeKind,
+}
+
+/// Qué hace la granada al terminar la mecha.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NadeKind {
+    #[default]
+    Frag,
+    /// Nube de humo que tapa la vista.
+    Smoke,
+    /// Señuelo que hace ruido.
+    Decoy,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -265,7 +279,7 @@ impl Arsenal {
             d.x += (rng.f() - 0.5) * sp;
             d.y += (rng.f() - 0.5) * sp;
             let d = d.normalize();
-            nades.push(Nade { pos: eye + d * 0.8, vel: d * 34.0 + p.vel * 0.3, fuse: 3.0, beep: 99.0, impact: true, gravity: 9.0, dmg: 7.0 * self.dmg_mul * if od { 1.5 } else { 1.0 }, enemy: false });
+            nades.push(Nade { pos: eye + d * 0.8, vel: d * 34.0 + p.vel * 0.3, fuse: 3.0, beep: 99.0, impact: true, gravity: 9.0, dmg: 7.0 * self.dmg_mul * if od { 1.5 } else { 1.0 }, enemy: false, kind: NadeKind::Frag });
             let k = 1.0 - p.aim_t * 0.5;
             ev.push(WeaponEvent::Kick { pitch: wd.kick * k, yaw: 0.0 });
             p.shake = (p.shake + 0.25).min(1.0);
@@ -304,7 +318,7 @@ impl Arsenal {
         self.nades -= 1;
         self.nade_cd = 0.6;
         let d = p.look_dir();
-        nades.push(Nade { pos: p.eye() + d * 0.6, vel: d * 17.0 + Vec3::Y * 3.5 + p.vel * 0.6, fuse: 1.7, beep: 0.4, impact: false, gravity: 22.0, dmg: 9.0, enemy: false });
+        nades.push(Nade { pos: p.eye() + d * 0.6, vel: d * 17.0 + Vec3::Y * 3.5 + p.vel * 0.6, fuse: 1.7, beep: 0.4, impact: false, gravity: 22.0, dmg: 9.0, enemy: false, kind: NadeKind::Frag });
         ev.push(WeaponEvent::Toss);
     }
 }
@@ -323,7 +337,7 @@ pub fn enemy_nade(from: Vec3, target: Vec3) -> Nade {
     let (dx, dz) = (target.x - from.x, target.z - from.z);
     let t = (dx.hypot(dz) / 13.0).max(0.8);
     let vel = Vec3::new(dx / t, (target.y - pos.y + 0.5 * 22.0 * t * t) / t, dz / t);
-    Nade { pos, vel, fuse: t + 0.9, beep: 0.2, impact: false, gravity: 22.0, dmg: 9.0, enemy: true }
+    Nade { pos, vel, fuse: t + 0.9, beep: 0.2, impact: false, gravity: 22.0, dmg: 9.0, enemy: true, kind: NadeKind::Frag }
 }
 
 /// Avanza las granadas: rebotes contra cajas y piso, mecha y explosiones.
@@ -375,6 +389,15 @@ pub fn update_nades(nades: &mut Vec<Nade>, world: &World, dt: f32, mut touches_e
         }
         n.fuse -= dt;
         n.beep -= dt;
+        if n.kind != NadeKind::Frag {
+            if n.fuse <= 0.0 {
+                ev.push(WeaponEvent::Gadget { kind: n.kind, pos: n.pos });
+                nades.swap_remove(i);
+                continue;
+            }
+            i += 1;
+            continue;
+        }
         if n.beep <= 0.0 {
             ev.push(WeaponEvent::Beep);
             n.beep = if n.fuse < 0.6 { 0.1 } else { 0.3 };
@@ -447,7 +470,7 @@ mod tests {
     #[test]
     fn la_granada_rebota_y_explota() {
         let w = World::new(60.0);
-        let mut nades = vec![Nade { pos: Vec3::new(0.0, 1.5, 0.0), vel: Vec3::new(5.0, 3.0, 0.0), fuse: 1.7, beep: 0.4, impact: false, gravity: 22.0, dmg: 9.0, enemy: false }];
+        let mut nades = vec![Nade { pos: Vec3::new(0.0, 1.5, 0.0), vel: Vec3::new(5.0, 3.0, 0.0), fuse: 1.7, beep: 0.4, impact: false, gravity: 22.0, dmg: 9.0, enemy: false, kind: NadeKind::Frag }];
         let mut ev = Vec::new();
         for _ in 0..120 {
             update_nades(&mut nades, &w, crate::TICK, |_| false, &mut ev);

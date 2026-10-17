@@ -20,6 +20,9 @@ pub struct UiFeed {
     /// "+120 BAJA" debajo de la mira.
     pub popup: Option<(u32, &'static str)>,
     pub popup_t: f32,
+    /// "+25 ¢" junto a los créditos.
+    pub credit: Option<(u32, &'static str)>,
+    pub credit_t: f32,
 }
 
 impl UiFeed {

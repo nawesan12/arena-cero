@@ -14,6 +14,7 @@ use arena_sim::enemies::Target;
 use arena_sim::game::{Game, GameEvent, Mark, Snd};
 use arena_sim::objectives::Actor;
 use arena_sim::vehicle::DriveInput;
+use arena_sim::economy::LootKind;
 use arena_sim::maps::Level;
 use arena_sim::weapons::{Arsenal, WEAPONS, WeaponEvent, WeaponInput};
 use arena_sim::{PlayerEvent, PlayerInput, PlayerState, TICK};
@@ -72,6 +73,8 @@ struct Latch {
     select: Option<usize>,
     cycle: i32,
     tag: bool,
+    gadget: bool,
+    gadget_cycle: bool,
     /// El clic que toma el mouse no dispara.
     grabbed_at: f64,
 }
@@ -203,8 +206,8 @@ fn mouse_look(motion: Res<AccumulatedMouseMotion>, cursor: Single<&CursorOptions
     look.sway_y = (look.sway_y + d.y * 0.0001).clamp(-0.05, 0.05);
 }
 
-fn latch_input(key: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>, scroll: Res<AccumulatedMouseScroll>, cursor: Single<&CursorOptions>, perks: Res<PerkState>, mut latch: ResMut<Latch>) {
-    if cursor.grab_mode == CursorGrabMode::None || perks.active() {
+fn latch_input(key: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>, scroll: Res<AccumulatedMouseScroll>, cursor: Single<&CursorOptions>, perks: Res<PerkState>, shop: Res<crate::shop::ShopOpen>, mut latch: ResMut<Latch>) {
+    if cursor.grab_mode == CursorGrabMode::None || perks.active() || shop.0 {
         return;
     }
     latch.jump |= key.just_pressed(KeyCode::Space);
@@ -213,6 +216,8 @@ fn latch_input(key: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButto
     latch.reload |= key.just_pressed(KeyCode::KeyR);
     latch.nade |= key.just_pressed(KeyCode::KeyG);
     latch.tag |= key.just_pressed(KeyCode::KeyT) || mouse.just_pressed(MouseButton::Middle);
+    latch.gadget |= key.just_pressed(KeyCode::KeyV);
+    latch.gadget_cycle |= key.just_pressed(KeyCode::KeyZ);
     for (i, k) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4].into_iter().enumerate() {
         if key.just_pressed(k) {
             latch.select = Some(i);
@@ -239,9 +244,9 @@ fn step_player(
     mut rig: ResMut<GunRig>,
     mut fx: ResMut<Fx>,
     mut snd: ResMut<Sounds>,
-    mut perks: ResMut<PerkState>,
+    (mut perks, shop, torch): (ResMut<PerkState>, Res<crate::shop::ShopOpen>, Res<crate::daynight::Flashlight>),
 ) {
-    if perks.active() {
+    if perks.active() || shop.0 {
         return;
     }
     let playing = cursor.grab_mode != CursorGrabMode::None;
@@ -349,7 +354,7 @@ fn step_player(
 
     // partida
     let s = &lp.state;
-    let target = Target { pos: s.pos, body: s.body(), vel: s.vel, feet: s.feet(), crouch_t: s.crouch_t, evasive: s.hook.is_some() || s.dash_t > 0.0 };
+    let target = Target { pos: s.pos, body: s.body(), vel: s.vel, feet: s.feet(), crouch_t: s.crouch_t, evasive: s.hook.is_some() || s.dash_t > 0.0, light: torch.0 };
     if !crate::off("ai") {
         game.step(level, &target, lp.hp >= lp.max_hp, TICK);
     }
@@ -357,6 +362,13 @@ fn step_player(
     game.step_objectives(level, &actor, TICK);
     if std::mem::take(&mut latch.tag) {
         game.try_tag(level, lp.state.eye(), lp.state.look_dir());
+    }
+    if std::mem::take(&mut latch.gadget_cycle) {
+        game.gadget_sel = (game.gadget_sel + 1) % 3;
+        snd.play(S::Swap);
+    }
+    if std::mem::take(&mut latch.gadget) && game.driving.is_none() {
+        game.use_gadget(lp.state.eye(), lp.state.look_dir(), lp.state.vel);
     }
     let beeps = game.nades.iter().filter(|n| !n.impact && n.beep > 0.3 - TICK && n.beep <= 0.3).count();
     if beeps > 0 {
@@ -384,6 +396,8 @@ fn step_player(
                 Snd::Beep => snd.play(S::Beep),
                 Snd::Tag => snd.play(S::Tag),
                 Snd::Crash => snd.play(S::Crash),
+                Snd::Decoy => snd.play_vol(S::Beep, 0.6),
+                Snd::Toss => snd.play(S::Toss),
             },
             GameEvent::Burst { pos, color, n, speed, life } => fx.burst(pos, color, n, speed, life),
             GameEvent::Tracer { a, b, color, life } => fx.tracer(a, b, color, life),
@@ -419,6 +433,23 @@ fn step_player(
                     look.yaw = v.yaw + std::f32::consts::PI;
                 }
             }
+            GameEvent::Credits { amount, label } => {
+                let total = if ui.credit_t > 0.0 { ui.credit.map_or(0, |c| c.0) } else { 0 } + amount;
+                ui.credit = Some((total, label));
+                ui.credit_t = 1.6;
+            }
+            GameEvent::Loot(k) => match k {
+                LootKind::Ammo => {
+                    let a = &mut lp.arsenal;
+                    a.ammo = [0, 1, 2, 3].map(|i| a.mag_of(i));
+                    ui.banner("MUNICIÓN", "Cargadores llenos");
+                }
+                LootKind::Nades => {
+                    lp.arsenal.nades = lp.arsenal.max_nades;
+                    ui.banner("GRANADAS", "Bandolera llena");
+                }
+                _ => {}
+            },
             GameEvent::WaveCleared => lp.arsenal.nades = (lp.arsenal.nades + 1).min(lp.arsenal.max_nades),
             GameEvent::Score { points, label } => {
                 if !label.starts_with("OBJETIVO") && lp.leech > 0.0 {

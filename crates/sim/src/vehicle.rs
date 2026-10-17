@@ -39,11 +39,58 @@ pub struct Vehicle {
     pub col: Option<ColliderId>,
     /// Vueltas de las ruedas, para el dibujo.
     pub wheel: f32,
+    pub hp: f32,
+    /// Destruido: queda como chatarra y no se puede manejar.
+    pub wrecked: bool,
+    /// Conducido por enemigos.
+    pub ai: Option<CarAi>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AiMode {
+    /// Recorre su ruta por las calles.
+    Patrol,
+    /// Va hacia el jugador.
+    Chase,
+    /// Frenó y bajó la tripulación.
+    Parked,
+}
+
+/// Piloto enemigo: ruta, modo, tripulación a bordo y lógica para destrabarse.
+#[derive(Clone, Debug)]
+pub struct CarAi {
+    pub route: Vec<Vec2>,
+    pub idx: usize,
+    pub mode: AiMode,
+    /// Soldados que bajan al alcanzarte.
+    pub crew: u32,
+    stuck_t: f32,
+    reverse_t: f32,
+    pub see_t: f32,
+    /// Convoy: al llegar al final de la ruta desaparece (y el evento se pierde).
+    pub one_way: bool,
+    pub event: Option<u32>,
+}
+
+impl CarAi {
+    pub fn new(route: Vec<Vec2>, crew: u32, one_way: bool, event: Option<u32>) -> Self {
+        Self { route, idx: 0, mode: AiMode::Patrol, crew, stuck_t: 0.0, reverse_t: 0.0, see_t: 0.0, one_way, event }
+    }
+}
+
+/// Lo que decidió el piloto en este paso.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AiOut {
+    None,
+    /// Llegó cerca del jugador: bajar a la tripulación acá.
+    Dismount,
+    /// Terminó la ruta de ida (convoy que escapó).
+    Arrived,
 }
 
 impl Vehicle {
     pub fn new(id: u32, pos: Vec3, yaw: f32, color: u8, world: &mut World) -> Self {
-        let mut v = Self { id, pos, yaw, speed: 0.0, steer: 0.0, vy: 0.0, color, col: None, wheel: 0.0 };
+        let mut v = Self { id, pos, yaw, speed: 0.0, steer: 0.0, vy: 0.0, color, col: None, wheel: 0.0, hp: 60.0, wrecked: false, ai: None };
         v.place_collider(world);
         v
     }
@@ -132,6 +179,83 @@ impl Vehicle {
         impact
     }
 
+    /// Piloto enemigo: elige acelerador y dirección según la ruta o el jugador, maneja y se
+    /// destraba yendo marcha atrás si se queda pegado contra algo.
+    pub fn ai_step(&mut self, world: &mut World, player: Vec3, sees_player: bool, dt: f32) -> AiOut {
+        let Some(mut ai) = self.ai.take() else { return AiOut::None };
+        let mut out = AiOut::None;
+        let here = Vec2::new(self.pos.x, self.pos.z);
+        let p2 = Vec2::new(player.x, player.z);
+        if sees_player {
+            ai.see_t = 0.0;
+            if ai.mode == AiMode::Patrol && !ai.one_way {
+                ai.mode = AiMode::Chase;
+            }
+        } else {
+            ai.see_t += dt;
+            if ai.mode == AiMode::Chase && ai.see_t > 20.0 {
+                ai.mode = AiMode::Patrol;
+            }
+        }
+        let (target, max_speed) = match ai.mode {
+            AiMode::Patrol => {
+                let w = ai.route[ai.idx % ai.route.len()];
+                if here.distance(w) < 6.0 {
+                    ai.idx += 1;
+                    if ai.one_way && ai.idx >= ai.route.len() {
+                        out = AiOut::Arrived;
+                    }
+                }
+                (ai.route[ai.idx % ai.route.len()], 13.0)
+            }
+            AiMode::Chase => {
+                if here.distance(p2) < 16.0 && ai.crew > 0 {
+                    ai.mode = AiMode::Parked;
+                    out = AiOut::Dismount;
+                }
+                (p2, 22.0)
+            }
+            AiMode::Parked => (here, 0.0),
+        };
+        let mut input = DriveInput::default();
+        if ai.mode == AiMode::Parked {
+            input.brake = true;
+        } else if ai.reverse_t > 0.0 {
+            ai.reverse_t -= dt;
+            input.throttle = -1.0;
+            input.steer = 1.0;
+        } else {
+            let to = target - here;
+            let want = to.x.atan2(to.y);
+            let mut diff = (want - self.yaw).rem_euclid(std::f32::consts::TAU);
+            if diff > std::f32::consts::PI {
+                diff -= std::f32::consts::TAU;
+            }
+            // girar a la derecha baja el yaw: dirección opuesta a la diferencia
+            input.steer = (-diff * 2.0).clamp(-1.0, 1.0);
+            let slow = diff.abs() > 0.9 || self.speed > max_speed;
+            input.throttle = if slow { 0.25 } else { 1.0 };
+            if self.speed > max_speed + 2.0 {
+                input.throttle = 0.0;
+            }
+        }
+        let impact = self.drive(&input, world, dt);
+        // ¿trabado? (choca o casi no avanza queriendo avanzar)
+        if ai.mode != AiMode::Parked && ai.reverse_t <= 0.0 {
+            if impact > 0.0 || (self.speed.abs() < 1.0 && input.throttle > 0.0) {
+                ai.stuck_t += dt;
+            } else {
+                ai.stuck_t = (ai.stuck_t - dt).max(0.0);
+            }
+            if ai.stuck_t > 1.2 {
+                ai.stuck_t = 0.0;
+                ai.reverse_t = 1.0;
+            }
+        }
+        self.ai = Some(ai);
+        out
+    }
+
     /// Lugar libre para bajarse: a la izquierda y, si no hay lugar, a la derecha.
     pub fn exit_spot(&self, world: &World) -> Vec3 {
         for side in [-1.0, 1.0] {
@@ -148,6 +272,21 @@ impl Vehicle {
 mod tests {
     use super::*;
     use crate::mat::Mat;
+
+    #[test]
+    fn el_piloto_sigue_su_ruta() {
+        let mut w = World::new(200.0);
+        let mut v = Vehicle::new(1, Vec3::ZERO, 0.0, 0, &mut w);
+        v.ai = Some(CarAi::new(vec![Vec2::new(0.0, 60.0), Vec2::new(60.0, 60.0)], 2, true, None));
+        let mut arrived = false;
+        for _ in 0..(60 * 30) {
+            if v.ai_step(&mut w, Vec3::splat(1000.0), false, crate::TICK) == AiOut::Arrived {
+                arrived = true;
+                break;
+            }
+        }
+        assert!(arrived, "no llegó: {:?}", v.pos);
+    }
 
     #[test]
     fn acelera_frena_y_dobla() {

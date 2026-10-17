@@ -17,6 +17,9 @@ pub enum Interact {
     Supply { ready: bool, cd: f32 },
     /// Subirse a un auto.
     Drive { vehicle: usize },
+    Loot { idx: usize },
+    /// Rehén de una misión (mantener F).
+    Hostage { mission: usize },
 }
 
 /// Cartel de interacción para la interfaz.
@@ -97,6 +100,12 @@ impl Game {
                 return Some(Interact::Objective { op: i, time: op.id.obj_time() });
             }
         }
+        if let Some(mission) = self.hostage_near(a.pos) {
+            return Some(Interact::Hostage { mission });
+        }
+        if let Some(idx) = self.loot_near(a.pos, a.feet) {
+            return Some(Interact::Loot { idx });
+        }
         for (p, _) in self.supplies(level) {
             if (p.x - a.pos.x).hypot(p.z - a.pos.z) < 2.4 && (p.y - 1.0 - a.feet).abs() < 1.4 {
                 return Some(Interact::Supply { ready: run.obj.supply_cd <= 0.0, cd: run.obj.supply_cd });
@@ -131,7 +140,16 @@ impl Game {
             Interact::Objective { op, time } => Prompt { label: format!("MANTENÉ F · {}", c.outposts[*op].task.to_uppercase()), frac: Some((run.obj.hold_t / time).min(1.0)) },
             Interact::Supply { ready, cd } => Prompt { label: if *ready { "F · REABASTECERSE".into() } else { format!("REABASTECIMIENTO LISTO EN {} S", cd.ceil()) }, frac: None },
             Interact::Drive { .. } => Prompt { label: "F · MANEJAR".into(), frac: None },
+            Interact::Loot { .. } => Prompt { label: "F · ABRIR LA CAJA".into(), frac: None },
+            Interact::Hostage { mission } => Prompt { label: "MANTENÉ F · LIBERAR AL REHÉN".into(), frac: Some((self.director.missions[*mission].hold / 2.5).min(1.0)) },
         });
+        // mantener F para liberar al rehén
+        if let Some(Interact::Hostage { mission }) = found {
+            if a.f_held {
+                self.director.missions[mission].hold += dt;
+            }
+        }
+        let run = self.city.as_mut().unwrap();
         // mantener F en un objetivo
         match found {
             Some(Interact::Objective { op, time }) if a.f_held => {
@@ -162,6 +180,7 @@ impl Game {
                     self.damage(enemy, hp + 1.0, None, true, a.pos, level);
                     self.events.push(GameEvent::Mark(Mark::Kill));
                 }
+                Some(Interact::Loot { idx }) => self.take_loot(idx),
                 Some(Interact::Drive { vehicle }) => {
                     self.driving = Some(vehicle);
                     self.events.push(GameEvent::Sound(Snd::Pickup));
@@ -262,10 +281,11 @@ impl Game {
             OutpostId::Arsenal => run.armory = true,
             _ => {}
         }
-        let all = run.done.len() >= c.outposts.len();
+        let all = run.done.len() >= c.outposts.iter().filter(|o| !o.camp).count();
         let (id, full, effect, obj_pos) = (o.id, o.full, o.effect, o.obj_pos);
         self.score += pts;
         self.events.push(GameEvent::Score { points: pts, label: if ghost { "OBJETIVO SIN SER VISTO" } else { "OBJETIVO" } });
+        self.add_credits(if ghost { 600 } else { 400 }, "OBJETIVO");
         self.events.push(GameEvent::Sound(Snd::Objective));
         match id {
             OutpostId::Sub => {
@@ -364,7 +384,7 @@ mod tests {
             }
         }
         let p = sub.obj_pos.unwrap() - Vec3::Y;
-        let t = Target { pos: p + Vec3::Y * 1.6, body: p + Vec3::Y, vel: Vec3::ZERO, feet: p.y, crouch_t: 0.0, evasive: false };
+        let t = Target { pos: p + Vec3::Y * 1.6, body: p + Vec3::Y, vel: Vec3::ZERO, feet: p.y, crouch_t: 0.0, evasive: false, light: false };
         for _ in 0..(60 * 4) {
             g.step(&mut l, &t, true, crate::TICK);
             g.step_objectives(&mut l, &actor(p, true), crate::TICK);
@@ -386,7 +406,7 @@ mod tests {
         }
         let p = ant.obj_pos.unwrap() - Vec3::Y;
         let far = Vec3::new(p.x + 30.0, 0.16, p.z + 30.0);
-        let t = Target { pos: far + Vec3::Y * 1.6, body: far + Vec3::Y, vel: Vec3::ZERO, feet: far.y, crouch_t: 0.0, evasive: false };
+        let t = Target { pos: far + Vec3::Y * 1.6, body: far + Vec3::Y, vel: Vec3::ZERO, feet: far.y, crouch_t: 0.0, evasive: false, light: false };
         for _ in 0..(60 * 3) {
             g.step_objectives(&mut l, &actor(p, true), crate::TICK);
         }

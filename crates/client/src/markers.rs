@@ -115,7 +115,7 @@ fn markers(
         if let (Some(c), Some(run)) = (level.0.city.as_ref(), g.city.as_ref()) {
             for (i, op) in c.outposts.iter().enumerate() {
                 let st = &run.ops[i];
-                if st.done {
+                if st.done || op.camp {
                     continue;
                 }
                 let cmd = g.enemies.iter().find(|e| e.op == Some(i) && e.kind == arena_sim::enemies::Kind::Soldier(arena_sim::enemies::SoldierKind::Commander));
@@ -137,6 +137,18 @@ fn markers(
                 if d < 70.0 {
                     items.push(Item { pos: p + Vec3::Y * 1.2, style: Style::Supply, icon: "+".into(), label: if d < 8.0 { name.to_uppercase() } else { format!("{} m", d.round()) }, clamp: false });
                 }
+            }
+        }
+        // misiones activas y botín cercano
+        for m in &g.director.missions {
+            let d = (m.pos.x - me.x).hypot(m.pos.z - me.z);
+            let up = if m.kind == arena_sim::director::MissionKind::Cargo { 1.5 } else { 2.6 };
+            items.push(Item { pos: m.pos + Vec3::Y * up, style: Style::Obj(Color::srgb(1.0, 0.42, 0.18)), icon: "!".into(), label: format!("{} · {} m · {}:{:02}", m.kind.title(), d.round(), (m.t_left.max(0.0) / 60.0) as u32, (m.t_left.max(0.0) % 60.0) as u32), clamp: true });
+        }
+        for l in &g.loot {
+            let d = l.pos.distance(me);
+            if d < 14.0 {
+                items.push(Item { pos: l.pos + Vec3::Y * 1.1, style: Style::Supply, icon: "$".into(), label: String::new(), clamp: false });
             }
         }
         let intel = g.city.as_ref().is_some_and(|r| r.intel);
@@ -241,8 +253,19 @@ fn markers(
     }
 }
 
-fn prompt(game: Res<GameRes>, cursor: Single<&CursorOptions>, mut root: Query<&mut Visibility, With<PromptRoot>>, mut text: Query<&mut Text, With<PromptText>>, mut fill: Query<(&mut Node, &mut Visibility), (With<PromptFill>, Without<PromptRoot>)>) {
-    let p = game.0.city.as_ref().and_then(|r| r.obj.prompt.clone()).filter(|_| cursor.grab_mode != CursorGrabMode::None);
+fn prompt(game: Res<GameRes>, level: Res<LevelRes>, lp: Res<LocalPlayer>, cursor: Single<&CursorOptions>, mut root: Query<&mut Visibility, With<PromptRoot>>, mut text: Query<&mut Text, With<PromptText>>, mut fill: Query<(&mut Node, &mut Visibility), (With<PromptFill>, Without<PromptRoot>)>) {
+    let mut p = game.0.city.as_ref().and_then(|r| r.obj.prompt.clone()).filter(|_| cursor.grab_mode != CursorGrabMode::None);
+    // en un punto de reabastecimiento también está la tienda
+    if game.0.driving.is_none() && cursor.grab_mode != CursorGrabMode::None && game.0.shop_near(&level.0, lp.state.pos) {
+        let shop = "B · TIENDA";
+        p = Some(match p {
+            Some(mut q) => {
+                q.label = format!("{}   ·   {shop}", q.label);
+                q
+            }
+            None => arena_sim::objectives::Prompt { label: shop.into(), frac: None },
+        });
+    }
     for mut v in &mut root {
         *v = if p.is_some() { Visibility::Inherited } else { Visibility::Hidden };
     }

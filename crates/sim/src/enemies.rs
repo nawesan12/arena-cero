@@ -324,7 +324,7 @@ fn ray_sphere(o: Vec3, d: Vec3, c: Vec3, r: f32) -> Option<f32> {
 }
 
 /// Rayo contra una caja orientada por `yaw` (centro y medidas en mundo).
-fn ray_obb(o: Vec3, d: Vec3, c: Vec3, half: Vec3, yaw: f32) -> Option<f32> {
+pub fn ray_obb(o: Vec3, d: Vec3, c: Vec3, half: Vec3, yaw: f32) -> Option<f32> {
     let (s, co) = yaw.sin_cos();
     // a coordenadas locales: rotar −yaw sobre Y
     let rot = |v: Vec3| Vec3::new(v.x * co - v.z * s, v.y, v.x * s + v.z * co);
@@ -397,6 +397,8 @@ pub struct Target {
     pub crouch_t: f32,
     /// Gancho o dash activos: muy difícil de acertar.
     pub evasive: bool,
+    /// Linterna prendida: de noche te ven igual que de día.
+    pub light: bool,
 }
 
 impl Target {
@@ -424,7 +426,10 @@ pub enum AiEvent {
 /* ---------- percepción ---------- */
 
 /// Distancia si ve al objetivo (0 si no): rango, cono de visión y línea de vista.
-fn can_see(world: &World, eye: Vec3, t: &Target, range: f32, cos_fov: f32, fwd: Vec2) -> f32 {
+fn can_see(ctx: &Ctx, eye: Vec3, t: &Target, range: f32, cos_fov: f32, fwd: Vec2) -> f32 {
+    let world = ctx.world;
+    // de noche se ve mucho menos lejos (salvo que tengas la linterna prendida)
+    let range = range * (1.0 - 0.45 * ctx.night * if t.light { 0.15 } else { 1.0 });
     let d3 = t.body - eye;
     let d = d3.length();
     if d > range {
@@ -436,7 +441,7 @@ fn can_see(world: &World, eye: Vec3, t: &Target, range: f32, cos_fov: f32, fwd: 
             return 0.0;
         }
     }
-    if !world.has_los(eye, t.body) {
+    if !world.has_los(eye, t.body) || crate::economy::smoke_blocks(ctx.smokes, eye, t.body) {
         return 0.0;
     }
     d.max(0.01)
@@ -467,6 +472,10 @@ pub struct Ctx<'a> {
     pub t: &'a Target,
     pub time: f32,
     pub dt: f32,
+    /// Nubes de humo activas (centro, radio).
+    pub smokes: &'a [(Vec3, f32)],
+    /// 0 de día, 1 de noche.
+    pub night: f32,
 }
 
 /// Estado de alerta compartido por puesto.
@@ -599,7 +608,7 @@ pub fn update_soldier(e: &mut Enemy, ctx: &Ctx, ops: &mut [OpState], corpses: &m
         let eye = Vec3::new(e.pos.x, e.pos.y + if e.crouch > 0.5 { 1.1 } else { 1.72 } * e.scale, e.pos.z);
         let fwd = Vec2::new(e.yaw.sin(), e.yaw.cos());
         let combat = e.st == Alert::Combat;
-        let d = can_see(ctx.world, eye, t, if combat { kind_range * 1.25 } else { kind_range }, if combat { 0.05 } else { 0.42 }, fwd);
+        let d = can_see(ctx, eye, t, if combat { kind_range * 1.25 } else { kind_range }, if combat { 0.05 } else { 0.42 }, fwd);
         let was = e.visible;
         e.visible = d > 0.0;
         // cada vez que vuelve a verte tarda en reaccionar (asomarse no es un suicidio)
@@ -817,7 +826,7 @@ pub fn update_turret(e: &mut Enemy, ctx: &Ctx, powered: bool, rng: &mut Rng, ev:
         e.vis_t = 0.12;
         let fwd = Vec2::new(e.yaw.sin(), e.yaw.cos());
         let combat = e.st == Alert::Combat;
-        let d = can_see(ctx.world, eye, t, if combat { 50.0 } else { 40.0 }, if combat { 0.5 } else { 0.86 }, fwd);
+        let d = can_see(ctx, eye, t, if combat { 50.0 } else { 40.0 }, if combat { 0.5 } else { 0.86 }, fwd);
         let was = e.visible;
         e.visible = d > 0.0;
         if e.visible && !was {

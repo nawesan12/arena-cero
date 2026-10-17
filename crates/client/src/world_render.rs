@@ -28,6 +28,10 @@ pub struct SkyDome;
 #[derive(Component)]
 pub struct SunDisc(pub Vec3);
 
+/// El sol del mapa (la luz que mueve el ciclo de día y noche).
+#[derive(Component)]
+pub struct WorldSun;
+
 /// Grupo visual móvil (la antena), por índice en `World::groups`.
 #[derive(Component)]
 pub struct GroupVisual(pub usize);
@@ -214,6 +218,7 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
         DirectionalLight { color: col(sun_c), illuminance: sun_i * 3000.0, shadow_maps_enabled: !crate::off("shadows"), ..default() },
         Transform::from_translation(level.sun_pos()).looking_at(Vec3::ZERO, Vec3::Y),
         cascades,
+        WorldSun,
         LevelEntity,
     ));
     let (sky_c, ground_c, hemi_i) = info.hemi;
