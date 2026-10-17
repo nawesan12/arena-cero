@@ -1,9 +1,11 @@
 //! Arena Cero, cliente nativo.
 //!
-//! Uso: `arena-cero [--map ciudad|deposito|fundicion|cantera|azotea] [--at x,z,yaw,pitch] [--weapon 1-4] [--shot archivo.png]`
+//! Uso: `arena-cero [--op 1-8 | --libre | --map ciudad|deposito|fundicion|cantera|azotea] [--at x,z,yaw,pitch] [--weapon 1-4] [--shot archivo.png]`
+//! Sin argumentos abre el menú principal (campaña, mundo libre, oleadas).
 //! `--shot` saca una captura a los pocos segundos y cierra (sirve para revisar cambios sin jugar).
 
 mod audio;
+mod campaign_ui;
 mod config;
 mod daynight;
 mod enemies_view;
@@ -39,6 +41,10 @@ struct Args {
     at: Option<[f32; 4]>,
     shot: Option<String>,
     weapon: Option<usize>,
+    /// `--op N`: arranca directo en la operación N (1-8).
+    op: Option<usize>,
+    /// `--libre`: mundo libre sin pasar por el menú.
+    free: bool,
 }
 
 fn parse_args() -> Args {
@@ -63,6 +69,8 @@ fn parse_args() -> Args {
                 }
             }
             "--shot" => a.shot = it.next(),
+            "--op" => a.op = it.next().and_then(|w| w.parse::<usize>().ok()).map(|w| w.clamp(1, arena_sim::campaign::N_OPS) - 1),
+            "--libre" => a.free = true,
             "--weapon" => a.weapon = it.next().and_then(|w| w.parse::<usize>().ok()).map(|w| w.clamp(1, 4) - 1),
             _ => eprintln!("opción desconocida: {k}"),
         }
@@ -71,8 +79,10 @@ fn parse_args() -> Args {
 }
 
 /// `ARENA_NO=gun,enemies,ai,env,shadows`: apaga partes para medir cuánto cuesta cada una.
+/// Se lee una sola vez (antes se leía la variable de entorno por enemigo en cada cuadro).
 pub fn off(k: &str) -> bool {
-    std::env::var("ARENA_NO").is_ok_and(|v| v.split(',').any(|x| x == k))
+    static NO: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    NO.get_or_init(|| std::env::var("ARENA_NO").map(|v| v.split(',').map(str::to_string).collect()).unwrap_or_default()).iter().any(|x| x == k)
 }
 
 fn main() {
@@ -82,12 +92,27 @@ fn main() {
             primary_window: Some(Window { title: "Arena Cero".into(), present_mode: if std::env::var_os("ARENA_BENCH").is_some() { PresentMode::AutoNoVsync } else { PresentMode::AutoVsync }, resolution: (1440, 900).into(), ..default() }),
             ..default()
         }))
+        .insert_resource(start_mode(&args))
         .insert_resource(args)
         .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin, render_scale::RenderScalePlugin, gun::GunPlugin, fx::FxPlugin, audio::AudioSynthPlugin, enemies_view::EnemiesViewPlugin, markers::MarkersPlugin, perks::PerksPlugin, tacmap::TacMapPlugin, hook_view::HookViewPlugin, vehicles_view::VehiclesViewPlugin))
-        .add_plugins((daynight::DayNightPlugin, shop::ShopPlugin, extras_view::ExtrasViewPlugin, people_view::PeopleViewPlugin, subway::SubwayPlugin))
+        .add_plugins((daynight::DayNightPlugin, shop::ShopPlugin, extras_view::ExtrasViewPlugin, people_view::PeopleViewPlugin, subway::SubwayPlugin, campaign_ui::CampaignUiPlugin))
         .add_systems(PreStartup, setup)
         .add_systems(Update, (world_render::follow_sky, world_render::animate_lava, auto_shot, bench))
         .run();
+}
+
+/// Sin argumentos se abre el menú; con `--op`, `--libre`, `--map` o `--shot` se va directo.
+fn start_mode(a: &Args) -> campaign_ui::StartMode {
+    use campaign_ui::StartMode;
+    if let Some(op) = a.op {
+        StartMode::Op(op)
+    } else if a.free {
+        StartMode::Free
+    } else if a.map.is_some_and(|m| m != MapId::Ciudad) || a.shot.is_some() || a.at.is_some() {
+        StartMode::Direct
+    } else {
+        StartMode::Menu
+    }
 }
 
 fn setup(mut commands: Commands, args: Res<Args>, mut quality: ResMut<quality::QualityRes>, mut settings: ResMut<player::Settings>, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>) {

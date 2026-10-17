@@ -4,6 +4,7 @@
 //! para predecir) y el servidor headless. Todo lo que genera es determinista a partir de
 //! una semilla, así servidor y clientes arman el mismo mapa sin mandarlo por red.
 
+pub mod campaign;
 pub mod city;
 pub mod director;
 pub mod economy;
@@ -17,6 +18,7 @@ pub mod people;
 pub mod perks;
 pub mod player;
 pub mod rng;
+pub mod subway;
 pub mod vehicle;
 pub mod weapons;
 pub mod world;

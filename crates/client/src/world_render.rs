@@ -120,7 +120,31 @@ fn sky_mesh(r: f32) -> Mesh {
     b.into_mesh()
 }
 
-/// Piso en baldosas de 8 m que dejan abiertas las que tocan un hueco (bocas de subte).
+/// Resta un rectángulo [x0, z0, x1, z1] a otro: quedan hasta cuatro piezas alrededor.
+fn cut(r: [f32; 4], h: &[f32; 4]) -> Vec<[f32; 4]> {
+    if !(r[0] < h[2] && r[2] > h[0] && r[1] < h[3] && r[3] > h[1]) {
+        return vec![r];
+    }
+    let mut out = Vec::new();
+    // franjas de arriba y de abajo a todo el ancho, y los costados a la altura del hueco
+    if r[1] < h[1] {
+        out.push([r[0], r[1], r[2], h[1]]);
+    }
+    if r[3] > h[3] {
+        out.push([r[0], h[3], r[2], r[3]]);
+    }
+    let (z0, z1) = (r[1].max(h[1]), r[3].min(h[3]));
+    if r[0] < h[0] {
+        out.push([r[0], z0, h[0], z1]);
+    }
+    if r[2] > h[2] {
+        out.push([h[2], z0, r[2], z1]);
+    }
+    out
+}
+
+/// Piso en baldosas de 8 m; las que tocan un hueco (bocas de subte) se recortan justo alrededor
+/// (antes se sacaba la baldosa entera y quedaba un agujero de 8 m).
 /// Las UV son las de un plano único de 2a × 2a, para que la textura no cambie.
 fn floor_mesh(a: f32, holes: &[[f32; 4]]) -> Mesh {
     let mut b = MeshBuf::default();
@@ -130,16 +154,22 @@ fn floor_mesh(a: f32, holes: &[[f32; 4]]) -> Mesh {
         for ix in 0..n {
             let (x0, z0) = (-a + ix as f32 * t, -a + iz as f32 * t);
             let (x1, z1) = ((x0 + t).min(a), (z0 + t).min(a));
-            if holes.iter().any(|h| x0 < h[2] && x1 > h[0] && z0 < h[3] && z1 > h[1]) {
-                continue;
+            let mut pieces = vec![[x0, z0, x1, z1]];
+            for h in holes {
+                pieces = pieces.iter().flat_map(|r| cut(*r, h)).collect();
             }
-            let base = b.pos.len() as u32;
-            for (x, z) in [(x0, z0), (x0, z1), (x1, z1), (x1, z0)] {
-                b.pos.push([x, 0.0, z]);
-                b.nor.push([0.0, 1.0, 0.0]);
-                b.uv.push([(x + a) / (2.0 * a), (z + a) / (2.0 * a)]);
+            for [x0, z0, x1, z1] in pieces {
+                if x1 - x0 < 0.01 || z1 - z0 < 0.01 {
+                    continue;
+                }
+                let base = b.pos.len() as u32;
+                for (x, z) in [(x0, z0), (x0, z1), (x1, z1), (x1, z0)] {
+                    b.pos.push([x, 0.0, z]);
+                    b.nor.push([0.0, 1.0, 0.0]);
+                    b.uv.push([(x + a) / (2.0 * a), (z + a) / (2.0 * a)]);
+                }
+                b.idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
             }
-            b.idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
         }
     }
     b.into_mesh()

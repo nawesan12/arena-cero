@@ -59,11 +59,15 @@ pub struct Director {
     pub hour: f32,
     next_t: f32,
     pub missions: Vec<Mission>,
+    /// Misiones dinámicas sí/no (la campaña las apaga).
+    pub enabled: bool,
+    /// La hora no avanza (la campaña fija la hora de cada operación).
+    pub frozen: bool,
 }
 
 impl Default for Director {
     fn default() -> Self {
-        Self { hour: 10.0, next_t: 75.0, missions: Vec::new() }
+        Self { hour: 10.0, next_t: 75.0, missions: Vec::new(), enabled: true, frozen: false }
     }
 }
 
@@ -230,7 +234,9 @@ impl Game {
 
     /// Hora del día, misiones nuevas y estado de las activas.
     pub(crate) fn step_director(&mut self, level: &mut Level, player: Vec3, dt: f32) {
-        self.director.hour = (self.director.hour + dt / SECS_PER_HOUR) % 24.0;
+        if !self.director.frozen {
+            self.director.hour = (self.director.hour + dt / SECS_PER_HOUR) % 24.0;
+        }
         let h = self.director.hour;
         if (19.0..19.0 + dt / SECS_PER_HOUR * 1.5).contains(&h) {
             self.banner("CAE LA NOCHE", "L prende la linterna · de noche cuesta más verte");
@@ -242,7 +248,7 @@ impl Game {
             return;
         }
         self.director.next_t -= dt;
-        if self.director.next_t <= 0.0 && self.director.missions.len() < 2 {
+        if self.director.enabled && self.director.next_t <= 0.0 && self.director.missions.len() < 2 {
             self.director.next_t = 70.0 + self.rng.f() * 60.0;
             self.start_mission(level, player);
         }

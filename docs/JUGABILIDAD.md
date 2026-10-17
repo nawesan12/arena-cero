@@ -5,9 +5,13 @@ para la historia del port, [HISTORIAL.md](HISTORIAL.md).
 
 ## Modos
 
+Sin argumentos, `arena-cero` abre el **menú principal** (campaña, elegir operación, mundo libre,
+oleadas, salir). En pausa (Esc), Enter vuelve al menú.
+
 | Modo | Cómo se abre | Qué es |
 |---|---|---|
-| **Distrito Sur** (ciudad) | `arena-cero` | Mundo abierto de 590 m. Siete objetivos en el centro, cuatro barrios alrededor, misiones dinámicas, economía, vehículos, subte, día y noche. |
+| **Campaña** | menú, o `arena-cero --op 1-8` | Ocho operaciones armadas a mano, con radio, puntos de control y rango. |
+| **Distrito Sur** (mundo libre) | menú, o `arena-cero --libre` | Mundo abierto de 590 m. Siete objetivos en el centro, cuatro barrios alrededor, misiones dinámicas, economía, vehículos, subte, día y noche. |
 | **Oleadas** | `arena-cero --map deposito` (también `fundicion`, `cantera`, `azotea`) | Arenas cerradas con oleadas de drones, jefe cada 5 oleadas y mejoras entre oleadas. |
 
 ## Controles
@@ -34,6 +38,32 @@ para la historia del port, [HISTORIAL.md](HISTORIAL.md).
 | F1 F2 F3 | Calidad baja / media / alta |
 | F4 | Mostrar FPS |
 | Esc | Pausa (pantalla con los controles) |
+
+## Campaña de operaciones
+
+Vera, la operadora, guía por radio (panel cian a la izquierda; las líneas enemigas salen en rojo).
+Arriba a la izquierda está el **objetivo actual** con su progreso y, si corre, el tiempo; en
+pantalla y en la brújula, el marcador dorado con el número del paso.
+
+| # | Operación | Qué pasa |
+|---|---|---|
+| 1 | Llegada | Tutorial: correr, gancho a una azotea, derribo por la espalda, auto, refugio. |
+| 2 | Antena | Eliminar al oficial con la tarjeta, panel (apaga la torreta), carga en la antena, escape con tiempo. |
+| 3 | Apagón | Vigía, 3 transformadores, generador, defensa de 45 s y escape **a oscuras** (faroles apagados). |
+| 4 | Fuga de datos | Entrar a la torre, subir, descargar, **defender 60 s** la subida y escapar de los drones. |
+| 5 | Arsenal | Un camión cruza con el código: **detenerlo** antes de que termine su ruta, tomar el código, forzar el arsenal, escapar de dos patrullas. |
+| 6 | La grúa | Trepar a la cabina (40 m), hackearla, **marcar con T** a 5 cabecillas y eliminarlos. |
+| 7 | Trenes | Cargas en 3 tanques y en el depósito, escape con perseguidores y huida **en subte**. |
+| 8 | Mando | Asalto, el comandante huye en **blindado**, persecución, eliminarlo y **extracción** en la Plaza Mayor (40 s). |
+
+- En la campaña no hay patrullas, botín, campamentos ni misiones del director; sí tránsito y peatones.
+  Cada puesto aparece recién cuando empieza su operación, y la hora queda fija.
+- Las operaciones anteriores cuentan como hechas (antena caída, torretas apagadas, datos, lanzagranadas, sin drones).
+- **Puntos de control** al terminar cada paso: si caés (o se acaba el tiempo, o se escapa el vehículo) el paso
+  vuelve a empezar desde ahí con vida y munición llenas. No hay intentos: cada caída baja el rango.
+- **Rango** S/A/B/C: 45 % tiempo contra la referencia, 35 % no caer y 20 % estilo (derribos, bajas
+  silenciosas y críticos en relación a las bajas). Bono de puntaje según el rango.
+- El progreso (operaciones desbloqueadas y mejor rango) se guarda en `~/.arena-cero` (`campana`, `rangos`).
 
 ## Movimiento
 

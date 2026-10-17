@@ -58,6 +58,14 @@ impl Game {
         self.trains = (0..n).map(|i| Train { t: (i as f32 * 17.0 + 4.0) % CYCLE, col: None }).collect();
     }
 
+    pub(crate) fn teardown_trains(&mut self, world: &mut crate::world::World) {
+        for tr in &mut self.trains {
+            if let Some(c) = tr.col.take() {
+                world.remove_collider(c);
+            }
+        }
+    }
+
     pub(crate) fn step_trains(&mut self, level: &mut Level, player_feet: Vec3, dt: f32) {
         let Some(c) = level.city.as_ref() else { return };
         let tracks: Vec<Vec3> = c.stations.iter().map(|s| s.track).collect();
@@ -71,7 +79,7 @@ impl Game {
             let p = tracks[i] + Vec3::X * dx;
             tr.col = Some(level.world.add_collider(p.x, p.z, LEN, HEIGHT, WIDTH, p.y + 0.3));
             // pitido al entrar en la estación
-            if before.is_none() {
+            if before.is_none() && p.distance(player_feet) < 90.0 {
                 self.events.push(GameEvent::Sound(crate::game::Snd::Train));
             }
             // si te agarra en las vías

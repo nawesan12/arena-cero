@@ -57,9 +57,18 @@ Corregido o cambiado a propósito:
 Nuevo (no estaba en la web): vehículos, ciudad ampliada, campamentos, patrullas en auto, misiones
 dinámicas, economía, tienda, gadgets, día y noche, Ciudad 2.0, subte, peatones y tránsito.
 
+## Campaña de operaciones (17/10/2026)
+
+- Motor de campaña en `arena_sim::campaign` y las 8 operaciones; menú principal, radio, objetivo, resumen con rango.
+- Pausa de verdad: con el mouse suelto la partida no avanza (antes los enemigos seguían disparando).
+- Subte con trenes visibles: se sube solo con las puertas abiertas; viaje con fundido a negro.
+- El piso se recorta justo alrededor de las bocas de subte (antes faltaba la baldosa de 8 m entera).
+- Carteles en cola (no se pisan), faroles recalculados solo al moverse, apagón; `ARENA_NO` se lee una vez.
+
 ## Lo que sigue
 
-- Campaña de oleadas con cambio de mapa cada 3 oleadas y menú para elegir mapa sin salir del juego.
-- Campaña más larga en la ciudad.
+- Sensación arcade: bloom, hit-stop, combo y racha en la ciudad, kill feed, impactos y muertes variadas, audio con paneo.
+- Ciudad menos repetida: texturas de fachada por barrio, carteles y señalética, ventanas de noche, props por barrio.
+- Oleadas: cambio de mapa cada 3 oleadas sin reiniciar el juego.
 - Etapa online: servidor autoritativo (`arena_sim` headless), cuentas, ranking validado y cooperativo 2-4.
 - Arte: modelos glTF para reemplazar los procedurales.

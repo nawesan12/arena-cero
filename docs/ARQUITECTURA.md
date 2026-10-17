@@ -48,15 +48,18 @@ Flujo de un paso (en `client/player.rs → step_player`, `FixedUpdate`):
 | `economy.rs` | Créditos, botín, tienda, gadgets (humo, señuelo, dron explorador). |
 | `people.rs` | Peatones y tránsito civil. |
 | `perks.rs` | Las 11 mejoras y la oferta de tres. |
+| `subway.rs` | Trenes del subte: ciclo por estación (llega, abre puertas, se va), colisionador, atropello, viaje. |
+| `campaign.rs` | Campaña: operaciones como datos (`OpDef` → `Step` con `Goal` y `Action`), puntos de control, rango. `Game::new_campaign(level, op)` arma la partida con `Setup::CAMPAIGN` (puestos dormidos, sin director). Tests con un bot que completa las 8 y que valida que los puntos no caigan en paredes. |
 
-Tests: 45, en cada módulo (`cargo test -p arena_sim`). Corren sin ventana.
+Tests: 51, en cada módulo (`cargo test -p arena_sim`). Corren sin ventana.
 
 ## `arena_client`
 
 | Módulo | Qué hace |
 |---|---|
 | `main.rs` | Opciones de línea de comandos, armado de la app, captura automática y modo de medición. |
-| `config.rs` | Preferencias en `~/.arena-cero` (calidad, música, FPS). |
+| `config.rs` | Preferencias en `~/.arena-cero` (calidad, música, FPS, progreso de la campaña). |
+| `campaign_ui.rs` | Menú principal, panel de objetivo, radio de Vera (letra por letra), resumen con rango y progreso. Cambiar de operación reconstruye el `Level` de la simulación (las mallas no cambian). |
 | `textures.rs` | Texturas procedurales (los mismos dibujos de canvas de la web) con mipmaps. |
 | `materials.rs` | Aspecto de cada `Mat`. |
 | `world_render.rs` | Cajas fundidas por (material, sombra, zona de 88 m), con giro; piso en baldosas con huecos; cilindros; árboles fundidos por zona; cielo; sol. |

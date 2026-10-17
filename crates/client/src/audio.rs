@@ -262,6 +262,10 @@ pub enum S {
     Toss,
     Beep,
     Crash,
+    /// Bocina y rodar del tren del subte.
+    Train,
+    /// Clic de radio antes de que hable la operadora.
+    Radio,
 }
 
 fn render(s: S) -> Pcm {
@@ -375,14 +379,24 @@ fn render(s: S) -> Pcm {
             b.noise(0.0, 2500.0, 0.8, 0.25, 0.3, Band);
             b.tone(0.0, Sine, 90.0, 30.0, 0.4, 0.6);
         }
+        S::Train => {
+            b.tone(0.0, Saw, 311.0, 311.0, 0.7, 0.07);
+            b.tone(0.0, Saw, 392.0, 392.0, 0.7, 0.06);
+            b.noise(0.0, 220.0, 0.6, 1.6, 0.35, Low);
+        }
+        S::Radio => {
+            b.noise(0.0, 2600.0, 1.2, 0.05, 0.25, Band);
+            b.tone(0.05, Square, 1650.0, 1650.0, 0.05, 0.05);
+            b.tone(0.11, Square, 2100.0, 2100.0, 0.04, 0.05);
+        }
     }
     b.into_pcm(MASTER, false)
 }
 
-const ALL: [S; 35] = [
+const ALL: [S; 37] = [
     S::Shot(0), S::Shot(1), S::Shot(2), S::Siren, S::Whiz, S::EShot, S::EShotBig, S::AlertBeep, S::Tag, S::Takedown, S::Plant, S::Objective,
     S::Ricochet, S::Hit, S::Crit, S::Hook, S::HookMiss, S::Launch, S::Dash, S::Perk, S::Boss, S::Kill, S::Boom, S::Enemy, S::Hurt, S::Reload,
-    S::Pickup, S::Empty, S::Aim, S::Swap, S::DJump, S::Slide, S::Toss, S::Beep, S::Crash,
+    S::Pickup, S::Empty, S::Aim, S::Swap, S::DJump, S::Slide, S::Toss, S::Beep, S::Crash, S::Train, S::Radio,
 ];
 
 /// Motor: loop de 1 s con frecuencias enteras (fase continua al repetir). La velocidad de

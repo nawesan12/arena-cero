@@ -38,8 +38,11 @@ Reglas del port:
 Hecho (detalle en `docs/`): todo el port de la web (mundo, 5 mapas, jugador, armas, audio, enemigos con A*,
 objetivos, F/T/Tab, mejoras, HUD) y además vehículos, ciudad de 590 m con barrios y campamentos, patrullas en auto,
 misiones dinámicas, economía/tienda/gadgets, día y noche, Ciudad 2.0 (cajas giradas, plaza, bulevar curvo,
-diagonal, rotondas, locales, subte con 3 estaciones), peatones y tránsito, gancho-péndulo.
-Falta: campaña de oleadas con cambio de mapa y menú, campaña más larga, servidor y cooperativo.
+diagonal, rotondas, locales, subte con 3 estaciones), peatones y tránsito, gancho-péndulo,
+y la **Campaña de operaciones** (`campaign.rs` + `campaign_ui.rs`, 8 operaciones, menú principal, rango).
+Falta: sensación arcade (bloom, hit-stop, combo), variedad visual de la ciudad, oleadas con cambio de mapa,
+servidor y cooperativo. Plan completo en `docs/HISTORIAL.md` ("Lo que sigue").
+- `cargo run -p arena_client -- --op 3` arranca directo en una operación; `--libre`, en el mundo libre.
 
 1. **Jugador** (`18-ciclo-de-juego.js`, `21-gancho...js`): CharacterBody3D con correr, agacharse/deslizar, doble salto, dash (Q) y gancho (Ctrl/E). Valores: velocidad 7 (10 corriendo), salto 8.2, gravedad 24, gancho 55 m con tirón 58 y tope 34 m/s, dash 24 m/s 0,16 s cada 3 s.
 2. **Armas** (`04-armas.js`, `16-disparo...js`, `06-materiales...js`): rifle, escopeta (9 perdigones), riel (atraviesa), lanzagranadas. Apuntado con click derecho, retroceso, críticos al núcleo/cabeza ×2.

@@ -13,7 +13,7 @@ pub struct DayNightPlugin;
 
 impl Plugin for DayNightPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Flashlight>().add_systems(PostStartup, setup).add_systems(Update, (toggle_light, update));
+        app.init_resource::<Flashlight>().add_systems(PostStartup, setup).add_systems(Update, (toggle_light, update, lamps));
     }
 }
 
@@ -59,8 +59,6 @@ fn update(
     game: Res<GameRes>,
     level: Res<LevelRes>,
     fl: Res<Flashlight>,
-    lamps: Res<Lamps>,
-    lp: Res<crate::player::LocalPlayer>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut clear: ResMut<ClearColor>,
     mut sun: Query<(&mut DirectionalLight, &mut Transform), (With<WorldSun>, Without<SunDisc>, Without<LampLight>)>,
@@ -68,7 +66,6 @@ fn update(
     sky: Query<&MeshMaterial3d<StandardMaterial>, With<SkyDome>>,
     mut disc: Query<(&mut Visibility, &mut SunDisc), Without<LampLight>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
-    mut lamp_lights: Query<(&mut PointLight, &mut Transform), (With<LampLight>, Without<DirectionalLight>)>,
     mut torch: Query<&mut SpotLight, With<Torch>>,
     mut last: Local<f32>,
 ) {
@@ -130,18 +127,42 @@ fn update(
         *v = if day_k > 0.02 { Visibility::Inherited } else { Visibility::Hidden };
         d.0 = sun_dir * 320.0;
     }
-    // faroles: los 14 más cercanos al jugador se prenden de noche
+}
+
+/// Faroles: los 14 más cercanos al jugador se prenden de noche (salvo apagón). Se recalcula solo
+/// si el jugador se movió unos metros o cambió la noche, no cada cuadro.
+fn lamps(game: Res<GameRes>, lamps: Res<Lamps>, lp: Res<crate::player::LocalPlayer>, mut lights: Query<(&mut PointLight, &mut Transform), With<LampLight>>, mut last: Local<Option<(Vec3, f32)>>) {
+    let night = game.0.director.night();
+    let on = if game.0.blackout { 0.0 } else { ((night - 0.25) / 0.5).clamp(0.0, 1.0) };
     let me = lp.state.pos;
-    let mut near: Vec<Vec3> = lamps.0.clone();
-    near.sort_by(|a, b| a.distance_squared(me).total_cmp(&b.distance_squared(me)));
-    let on = ((night - 0.25) / 0.5).clamp(0.0, 1.0);
-    for (i, (mut l, mut t)) in lamp_lights.iter_mut().enumerate() {
-        match near.get(i) {
-            Some(p) if on > 0.0 => {
-                t.translation = *p;
+    if last.is_some_and(|(p, o)| p.distance_squared(me) < 36.0 && (o - on).abs() < 0.01) {
+        return;
+    }
+    *last = Some((me, on));
+    if on <= 0.0 {
+        for (mut l, _) in &mut lights {
+            if l.intensity != 0.0 {
+                l.intensity = 0.0;
+            }
+        }
+        return;
+    }
+    let mut idx: Vec<usize> = (0..lamps.0.len()).collect();
+    let n = lights.iter().len().min(idx.len());
+    if n == 0 {
+        return;
+    }
+    let key = |i: &usize| lamps.0[*i].distance_squared(me);
+    if n < idx.len() {
+        idx.select_nth_unstable_by(n - 1, |a, b| key(a).total_cmp(&key(b)));
+    }
+    for (i, (mut l, mut t)) in lights.iter_mut().enumerate() {
+        match idx.get(i).filter(|_| i < n) {
+            Some(&k) => {
+                t.translation = lamps.0[k];
                 l.intensity = 900_000.0 * on;
             }
-            _ => l.intensity = 0.0,
+            None => l.intensity = 0.0,
         }
     }
 }

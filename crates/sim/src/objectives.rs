@@ -46,7 +46,7 @@ pub struct ObjState {
     supply_cd: f32,
     /// Tiempo desde que voló la antena (para la animación de caída).
     pub antenna_fall: Option<f32>,
-    fell: bool,
+    pub(crate) fell: bool,
     pub prompt: Option<Prompt>,
     pub victory: bool,
     perk_t: Option<f32>,
@@ -93,7 +93,7 @@ impl Game {
         }
         for (i, op) in c.outposts.iter().enumerate() {
             let Some(p) = op.obj_pos else { continue };
-            if run.ops[i].done || run.obj.charge.is_some_and(|ch| ch.op == i) {
+            if run.ops[i].done || run.ops[i].asleep || run.obj.charge.is_some_and(|ch| ch.op == i) {
                 continue;
             }
             if (p.x - a.pos.x).hypot(p.z - a.pos.z) < 2.6 && (p.y - 1.0 - a.feet).abs() < 1.4 {
@@ -177,6 +177,7 @@ impl Game {
                     self.events.push(GameEvent::Sound(Snd::Takedown));
                     self.events.push(GameEvent::Burst { pos: p, color: 0xfff0e0, n: 6, speed: 3.0, life: 0.3 });
                     let hp = self.enemies[enemy].hp;
+                    self.takedowns += 1;
                     self.damage(enemy, hp + 1.0, None, true, a.pos, level);
                     self.events.push(GameEvent::Mark(Mark::Kill));
                 }
@@ -287,7 +288,8 @@ impl Game {
             OutpostId::Arsenal => run.armory = true,
             _ => {}
         }
-        let all = run.done.len() >= c.outposts.iter().filter(|o| !o.camp).count();
+        // en la campaña el final lo decide la operación, no la cuenta de puestos
+        let all = run.done.len() >= c.outposts.iter().filter(|o| !o.camp).count() && self.campaign.is_none();
         let (id, full, effect, obj_pos) = (o.id, o.full, o.effect, o.obj_pos);
         self.score += pts;
         self.events.push(GameEvent::Score { points: pts, label: if ghost { "OBJETIVO SIN SER VISTO" } else { "OBJETIVO" } });

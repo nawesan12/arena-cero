@@ -16,6 +16,7 @@ const AMBER: Color = Color::srgb(1.0, 0.690, 0.180);
 const RED: Color = Color::srgb(1.0, 0.239, 0.353);
 const MINT: Color = Color::srgb(0.365, 1.0, 0.690);
 const DARK: Color = Color::srgb(0.08, 0.06, 0.04);
+const GOLD: Color = Color::srgb(1.0, 0.84, 0.3);
 const POOL: usize = 64;
 
 pub struct MarkersPlugin;
@@ -115,7 +116,7 @@ fn markers(
         if let (Some(c), Some(run)) = (level.0.city.as_ref(), g.city.as_ref()) {
             for (i, op) in c.outposts.iter().enumerate() {
                 let st = &run.ops[i];
-                if st.done || op.camp {
+                if st.done || op.camp || st.asleep || g.campaign.is_some() {
                     continue;
                 }
                 let cmd = g.enemies.iter().find(|e| e.op == Some(i) && e.kind == arena_sim::enemies::Kind::Soldier(arena_sim::enemies::SoldierKind::Commander));
@@ -126,6 +127,13 @@ fn markers(
                 };
                 let d = (pos.x - me.x).hypot(pos.z - me.z);
                 items.push(Item { pos: pos + Vec3::Y * up, style: Style::Obj(if st.alarm > 0.0 { RED } else { AMBER }), icon: op.icon.to_string(), label: format!("{} · {} m", op.name.to_uppercase(), d.round()), clamp: true });
+            }
+            if let Some(cp) = &g.campaign {
+                for (k, p) in cp.marks.iter().enumerate() {
+                    let d = (p.x - me.x).hypot(p.z - me.z);
+                    let label = if k == 0 { format!("{} · {} m", cp.objective.to_uppercase(), d.round()) } else { format!("{} m", d.round()) };
+                    items.push(Item { pos: *p + Vec3::Y * 0.8, style: Style::Obj(GOLD), icon: format!("{}", cp.step + 1), label, clamp: true });
+                }
             }
             if let Some(ch) = run.obj.charge {
                 if let Some(p) = c.outposts[ch.op].obj_pos {

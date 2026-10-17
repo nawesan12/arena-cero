@@ -23,11 +23,33 @@ pub struct UiFeed {
     /// "+25 ¢" junto a los créditos.
     pub credit: Option<(u32, &'static str)>,
     pub credit_t: f32,
+    /// Radio de la campaña: líneas en espera (quién, texto).
+    pub radio: std::collections::VecDeque<(&'static str, String)>,
+    /// Carteles que llegaron mientras se mostraba otro.
+    pub banner_queue: std::collections::VecDeque<(String, String)>,
 }
 
 impl UiFeed {
+    /// Cartel grande. Si hay otro en pantalla hace cola (antes se pisaban); los repetidos se descartan.
     pub fn banner(&mut self, t: impl Into<String>, s: impl Into<String>) {
-        self.banner = Some((t.into(), s.into()));
+        let b = (t.into(), s.into());
+        if self.banner_t > 0.6 && self.banner.as_ref() != Some(&b) {
+            if !self.banner_queue.contains(&b) && self.banner_queue.len() < 4 {
+                self.banner_queue.push_back(b);
+            }
+            return;
+        }
+        self.banner = Some(b);
         self.banner_t = 2.2;
+    }
+
+    /// Pasa al próximo cartel en espera (lo llama el HUD cada cuadro).
+    pub fn next_banner(&mut self) {
+        if self.banner_t <= 0.6 {
+            if let Some(b) = self.banner_queue.pop_front() {
+                self.banner = Some(b);
+                self.banner_t = 2.2;
+            }
+        }
     }
 }

@@ -21,6 +21,8 @@ const MINT: Color = Color::srgb(0.365, 1.0, 0.690);
 const CYAN: Color = Color::srgb(0.373, 0.847, 1.0);
 const PANEL: Color = Color::srgba(0.04, 0.06, 0.07, 0.55);
 const DARK: Color = Color::srgb(0.08, 0.06, 0.04);
+/// Objetivo de la campaña.
+const GOLD: Color = Color::srgb(1.0, 0.84, 0.3);
 
 const COMPASS_W: f32 = 520.0;
 /// Grados visibles en la brújula.
@@ -414,6 +416,7 @@ fn spawn_hud(mut commands: Commands, mut font_assets: ResMut<Assets<Font>>, mut 
 fn tick_feed(time: Res<Time>, mut ui: ResMut<UiFeed>) {
     let dt = time.delta_secs();
     ui.banner_t -= dt;
+    ui.next_banner();
     ui.mark_t -= dt;
     ui.popup_t -= dt;
     ui.credit_t -= dt;
@@ -557,7 +560,19 @@ fn top(
     let popup_a = (ui.popup_t / 0.4).clamp(0.0, 1.0);
     for (mut t, mut c, k) in &mut texts {
         match *k {
-            T::Wave => set(&mut t, if city { String::new() } else { format!("OLEADA {:02}", g.wave) }),
+            T::Wave => set(&mut t, match (&g.campaign, city) {
+                (Some(cp), _) => format!("OP {}", cp.op + 1),
+                (None, true) => String::new(),
+                (None, false) => format!("OLEADA {:02}", g.wave),
+            }),
+            T::WaveSub if g.campaign.is_some() => {
+                let cp = g.campaign.as_ref().unwrap();
+                set(&mut t, format!("{} · {}:{:02}", cp.def.name.to_uppercase(), (cp.t / 60.0) as u32, (cp.t % 60.0) as u32));
+            }
+            T::Lives if g.campaign.is_some() => {
+                let d = g.campaign.as_ref().map_or(0, |c| c.deaths);
+                set(&mut t, if d == 0 { "SIN CAÍDAS".into() } else { format!("CAÍDAS {d}") });
+            }
             T::WaveSub => set(&mut t, match &g.city {
                 Some(run) => format!("{}:{:02}", (run.time / 60.0) as u32, (run.time % 60.0) as u32),
                 None => {
@@ -634,7 +649,7 @@ fn top(
     // rombos de objetivos: ámbar pendiente, rojo en alerta, verde hecho
     let ops = level.0.city.as_ref().map(|c| &c.outposts);
     for (p, mut v, children) in &mut pips {
-        let Some(op) = ops.and_then(|o| o.get(p.0)) else {
+        let Some(op) = ops.and_then(|o| o.get(p.0)).filter(|_| g.campaign.is_none()) else {
             *v = Visibility::Hidden;
             continue;
         };
@@ -692,11 +707,16 @@ fn compass(
     if let (Some(c), Some(run)) = (level.0.city.as_ref(), game.0.city.as_ref()) {
         for (i, op) in c.outposts.iter().enumerate() {
             let st = &run.ops[i];
-            if st.done || op.camp {
+            if st.done || op.camp || st.asleep || game.0.campaign.is_some() {
                 continue;
             }
             let p = op.obj_pos.unwrap_or(Vec3::new(op.cx, 0.0, op.cz));
             items.push((p, op.icon, if st.alarm > 0.0 { RED } else { AMBER }));
+        }
+        if let Some(cp) = &game.0.campaign {
+            for p in &cp.marks {
+                items.push((*p, '!', GOLD));
+            }
         }
         for m in &game.0.director.missions {
             items.push((m.pos, '!', Color::srgb(1.0, 0.42, 0.18)));
@@ -846,14 +866,14 @@ fn numbers(ui: Res<UiFeed>, cam: Query<(&Camera, &GlobalTransform), With<MainCam
     }
 }
 
-fn pause_screen(cursor: Single<&CursorOptions>, level: Res<LevelRes>, mut q: Query<&mut Visibility, With<Pause>>, mut map: Query<&mut Text, With<PauseMap>>) {
-    let paused = cursor.grab_mode == CursorGrabMode::None;
+fn pause_screen(cursor: Single<&CursorOptions>, level: Res<LevelRes>, menu: Res<crate::campaign_ui::MenuOpen>, mut q: Query<&mut Visibility, With<Pause>>, mut map: Query<&mut Text, With<PauseMap>>) {
+    let paused = cursor.grab_mode == CursorGrabMode::None && !menu.0;
     for mut v in &mut q {
         *v = if paused { Visibility::Inherited } else { Visibility::Hidden };
     }
     let i = &level.0.info;
     for mut t in &mut map {
-        set(&mut t, format!("{} · {} — {}", i.name.to_uppercase(), i.size, i.desc));
+        set(&mut t, format!("{} · {} — {}   ·   ENTER: MENÚ PRINCIPAL", i.name.to_uppercase(), i.size, i.desc));
     }
 }
 

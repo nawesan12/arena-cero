@@ -485,6 +485,8 @@ pub struct OpState {
     pub done: bool,
     pub cleared: bool,
     pub ever_alarm: bool,
+    /// Campaña: el puesto todavía no despertó (sin unidades, no se puede usar ni cuenta).
+    pub asleep: bool,
     /// Índices (en `enemies`) de sus unidades vivas se recalculan al vuelo con `op`.
     pub shooters: u32,
 }

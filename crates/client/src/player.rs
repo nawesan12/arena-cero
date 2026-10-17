@@ -175,8 +175,9 @@ pub fn spawn_player(commands: &mut Commands, level: &LevelRes, start: Option<[f3
     ));
 }
 
-fn grab_cursor(mut cursor: Single<&mut CursorOptions>, mouse: Res<ButtonInput<MouseButton>>, key: Res<ButtonInput<KeyCode>>, settings: Res<Settings>, time: Res<Time<Real>>, mut latch: ResMut<Latch>) {
-    if !settings.input {
+fn grab_cursor(mut cursor: Single<&mut CursorOptions>, mouse: Res<ButtonInput<MouseButton>>, key: Res<ButtonInput<KeyCode>>, settings: Res<Settings>, time: Res<Time<Real>>, mut latch: ResMut<Latch>, menu: Res<crate::campaign_ui::MenuOpen>) {
+    // en el menú y en el resumen el mouse queda libre para hacer clic
+    if !settings.input || menu.0 {
         return;
     }
     if mouse.just_pressed(MouseButton::Left) && cursor.grab_mode == CursorGrabMode::None {
@@ -245,8 +246,17 @@ fn step_player(
     mut fx: ResMut<Fx>,
     mut snd: ResMut<Sounds>,
     (mut perks, shop, torch, subway): (ResMut<PerkState>, Res<crate::shop::ShopOpen>, Res<crate::daynight::Flashlight>, Res<crate::subway::SubwayOpen>),
+    (menu, settings): (Res<crate::campaign_ui::MenuOpen>, Res<Settings>),
 ) {
-    if perks.active() || shop.0 || subway.0 {
+    if perks.active() || shop.0 || subway.0 || menu.0 {
+        return;
+    }
+    // pausa de verdad: con el mouse suelto (Esc, ventana sin foco) la partida no avanza
+    if settings.input && cursor.grab_mode == CursorGrabMode::None {
+        return;
+    }
+    // operación terminada: queda congelada detrás del resumen
+    if game.0.campaign.as_ref().is_some_and(|c| c.result.is_some()) {
         return;
     }
     let playing = cursor.grab_mode != CursorGrabMode::None;
@@ -360,6 +370,7 @@ fn step_player(
     }
     let actor = Actor { pos: lp.state.pos, feet: lp.state.feet(), f_held: playing && key.pressed(KeyCode::KeyF) };
     game.step_objectives(level, &actor, TICK);
+    game.step_campaign(level, &actor, TICK);
     if std::mem::take(&mut latch.tag) {
         game.try_tag(level, lp.state.eye(), lp.state.look_dir());
     }
@@ -399,6 +410,8 @@ fn step_player(
                 Snd::Decoy => snd.play_vol(S::Beep, 0.6),
                 Snd::Toss => snd.play(S::Toss),
                 Snd::Scream => snd.play_vol(S::Hurt, 0.5),
+                Snd::Train => snd.play_vol(S::Train, 0.7),
+                Snd::Radio => snd.play(S::Radio),
             },
             GameEvent::Burst { pos, color, n, speed, life } => fx.burst(pos, color, n, speed, life),
             GameEvent::Tracer { a, b, color, life } => fx.tracer(a, b, color, life),
@@ -452,6 +465,14 @@ fn step_player(
                 _ => {}
             },
             GameEvent::WaveCleared => lp.arsenal.nades = (lp.arsenal.nades + 1).min(lp.arsenal.max_nades),
+            GameEvent::Radio { who, text } => ui.radio.push_back((who, text)),
+            GameEvent::Respawn { pos, yaw } => {
+                respawn_at(lp, pos + Vec3::Y * EYE);
+                lp.arsenal.refill();
+                look.yaw = yaw;
+                look.pitch = 0.0;
+                lp.state.yaw = yaw;
+            }
             GameEvent::Score { points, label } => {
                 if !label.starts_with("OBJETIVO") && lp.leech > 0.0 {
                     lp.hp = (lp.hp + lp.leech).min(lp.max_hp);
@@ -489,21 +510,31 @@ fn step_player(
 /// Caída del jugador. En la ciudad cuesta un intento y se reaparece en el punto de
 /// reabastecimiento más cercano; sin intentos (o en oleadas) la partida vuelve a empezar.
 /// Devuelve si la partida volvió a empezar.
+/// Vuelve a poner al jugador en `at` (ojos), conservando las mejoras de movimiento.
+pub fn respawn_at(lp: &mut LocalPlayer, at: Vec3) {
+    let (yaw, sm, mj, dm) = (lp.state.yaw, lp.state.speed_mul, lp.state.max_jumps, lp.state.dash_cd_mul);
+    lp.state = PlayerState::new(at.x, at.z);
+    lp.state.speed_mul = sm;
+    lp.state.max_jumps = mj;
+    lp.state.dash_cd_mul = dm;
+    lp.state.pos = Vec3::new(at.x, at.y, at.z);
+    lp.state.yaw = yaw;
+    lp.prev = lp.state.pos;
+    lp.hp = lp.max_hp;
+    lp.last_hurt = 10.0;
+    lp.hurt_flash = 1.0;
+}
+
 fn player_down(lp: &mut LocalPlayer, game: &mut Game, level: &mut Level, ui: &mut UiFeed) -> bool {
-    let city_lives = game.city.as_ref().map(|c| c.lives);
-    let respawn = |lp: &mut LocalPlayer, at: Vec3| {
-        let (yaw, sm, mj, dm) = (lp.state.yaw, lp.state.speed_mul, lp.state.max_jumps, lp.state.dash_cd_mul);
-        lp.state = PlayerState::new(at.x, at.z);
-        lp.state.speed_mul = sm;
-        lp.state.max_jumps = mj;
-        lp.state.dash_cd_mul = dm;
-        lp.state.pos = Vec3::new(at.x, at.y, at.z);
-        lp.state.yaw = yaw;
-        lp.prev = lp.state.pos;
+    // campaña: sin intentos; el paso vuelve a empezar desde el punto de control
+    if game.campaign.is_some() {
         lp.hp = lp.max_hp;
-        lp.last_hurt = 10.0;
-        lp.hurt_flash = 1.0;
-    };
+        game.campaign_down(level);
+        ui.banner("CAÍSTE", "Volvés al último punto de control");
+        return false;
+    }
+    let city_lives = game.city.as_ref().map(|c| c.lives);
+    let respawn = respawn_at;
     match city_lives {
         Some(l) if l > 1 => {
             game.city.as_mut().unwrap().lives -= 1;

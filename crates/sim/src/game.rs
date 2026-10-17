@@ -42,6 +42,10 @@ pub enum Snd {
     Toss,
     /// Grito de un civil.
     Scream,
+    /// Tren que entra en la estación.
+    Train,
+    /// Bip de radio (operadora).
+    Radio,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -83,6 +87,29 @@ pub enum GameEvent {
     Loot(crate::economy::LootKind),
     /// Puntos ganados (para el "+120" junto a la mira).
     Score { points: u32, label: &'static str },
+    /// Línea de radio de la campaña (quién habla y qué dice).
+    Radio { who: &'static str, text: String },
+    /// Campaña: volviste al último punto de control (el cliente restaura vida y munición).
+    Respawn { pos: Vec3, yaw: f32 },
+}
+
+/// Qué arma `Game::new_with`: el mundo libre trae todo; la campaña despierta cada puesto cuando
+/// empieza su operación y no tiene patrullas, botín ni misiones del director.
+#[derive(Clone, Copy, Debug)]
+pub struct Setup {
+    pub outposts: bool,
+    pub camps: bool,
+    pub surveillance: bool,
+    pub patrols: usize,
+    pub traffic: usize,
+    pub people: usize,
+    pub loot: usize,
+    pub director: bool,
+}
+
+impl Setup {
+    pub const FREE: Setup = Setup { outposts: true, camps: true, surveillance: true, patrols: 6, traffic: 16, people: 80, loot: 80, director: true };
+    pub const CAMPAIGN: Setup = Setup { outposts: false, camps: false, surveillance: false, patrols: 0, traffic: 16, people: 80, loot: 0, director: false };
 }
 
 #[derive(Clone, Debug)]
@@ -159,10 +186,23 @@ pub struct Game {
     pub scouts: Vec<crate::economy::Scout>,
     pub director: crate::director::Director,
     pub people: Vec<crate::people::Person>,
+    /// Trenes del subte (uno por estación).
+    pub trains: Vec<crate::subway::Train>,
+    /// Campaña de operaciones (None en el mundo libre y en oleadas).
+    pub campaign: Option<crate::campaign::Campaign>,
+    /// Críticos y derribos del jugador (para el rango de la campaña).
+    pub crits: u32,
+    pub takedowns: u32,
+    /// Apagón: los faroles no se prenden (lo lee el cliente).
+    pub blackout: bool,
 }
 
 impl Game {
     pub fn new(level: &mut Level, seed: u32) -> Self {
+        Self::new_with(level, seed, Setup::FREE)
+    }
+
+    pub fn new_with(level: &mut Level, seed: u32, setup: Setup) -> Self {
         let mode = if level.info.city { Mode::City } else { Mode::Waves };
         let mut g = Game {
             mode,
@@ -199,13 +239,21 @@ impl Game {
             scouts: Vec::new(),
             director: Default::default(),
             people: Vec::new(),
+            trains: Vec::new(),
+            campaign: None,
+            crits: 0,
+            takedowns: 0,
+            blackout: false,
         };
         if let Some(c) = level.city.as_ref() {
-            g.init_city(c.clone(), &mut level.world);
-            g.place_loot(level, 80);
-            g.spawn_patrols(level, 6);
-            g.spawn_traffic(level, 16);
-            g.spawn_people(level, 80);
+            let n_st = c.stations.len();
+            g.init_city(c.clone(), &mut level.world, &setup);
+            g.place_loot(level, setup.loot);
+            g.spawn_patrols(level, setup.patrols);
+            g.spawn_traffic(level, setup.traffic);
+            g.spawn_people(level, setup.people);
+            g.init_trains(n_st);
+            g.director.enabled = setup.director;
         }
         g
     }
@@ -233,27 +281,29 @@ impl Game {
 
     /* ---------- ciudad ---------- */
 
-    fn init_city(&mut self, c: CityData, world: &mut World) {
+    fn init_city(&mut self, c: CityData, world: &mut World, setup: &Setup) {
         let mut run = CityRun { ops: vec![OpState::default(); c.outposts.len()], powered: true, antenna: true, drones: true, intel: false, armory: false, lives: 3, time: 0.0, done: Vec::new(), reinforce_t: 20.0, stealth_kills: 0, turret_cols: Vec::new(), obj: Default::default() };
-        for (oi, op) in c.outposts.iter().enumerate() {
+        for op in &c.outposts {
             self.nav.push(NavGrid::build(world, op.cx, op.cz, 36.0, 0.16));
-            for u in &op.units {
-                let id = self.id();
-                let e = new_soldier(id, oi, u, &mut self.rng);
-                self.enemies.push(e);
-            }
-            for t in &op.turrets {
-                let id = self.id();
-                let e = new_turret(id, oi, t, &mut self.rng);
-                run.turret_cols.push((id, world.add_collider(t.x, t.z, 0.9, 1.4, 0.9, 0.16)));
-                self.enemies.push(e);
+        }
+        self.city = Some(run);
+        for (oi, op) in c.outposts.iter().enumerate() {
+            let awake = if op.camp { setup.camps } else { setup.outposts };
+            if awake {
+                self.spawn_outpost(oi, op, world);
+            } else {
+                self.city.as_mut().unwrap().ops[oi].asleep = true;
             }
         }
+        run = self.city.take().unwrap();
         for &(p, yaw, color) in &c.vehicles {
             let id = self.id();
             self.vehicles.push(crate::vehicle::Vehicle::new(id, p, yaw, color, world));
         }
         for (i, route) in c.drone_routes.iter().enumerate() {
+            if !setup.surveillance {
+                break;
+            }
             let id = self.id();
             let p = route[i % route.len()];
             let mut e = new_drone(id, DroneKind::Normal, Vec3::new(p[0], 16.0, p[1]), 0, &mut self.rng);
@@ -264,6 +314,28 @@ impl Game {
             self.enemies.push(e);
         }
         self.city = Some(run);
+    }
+
+    /// Despierta un puesto: aparecen sus soldados y torretas (la campaña lo hace al empezar cada
+    /// operación; el mundo libre, al armar la ciudad).
+    pub fn spawn_outpost(&mut self, oi: usize, op: &crate::city::Outpost, world: &mut World) {
+        for u in &op.units {
+            let id = self.id();
+            let e = new_soldier(id, oi, u, &mut self.rng);
+            self.enemies.push(e);
+        }
+        for t in &op.turrets {
+            let id = self.id();
+            let e = new_turret(id, oi, t, &mut self.rng);
+            let col = world.add_collider(t.x, t.z, 0.9, 1.4, 0.9, 0.16);
+            if let Some(run) = self.city.as_mut() {
+                run.turret_cols.push((id, col));
+            }
+            self.enemies.push(e);
+        }
+        if let Some(run) = self.city.as_mut() {
+            run.ops[oi].asleep = false;
+        }
     }
 
     /// Alarma en un puesto: todas sus unidades entran en combate y llegan refuerzos.
@@ -369,6 +441,7 @@ impl Game {
                 world.remove_collider(col);
             }
         }
+        self.teardown_trains(world);
     }
 
     /// Al caer en la ciudad: se calman las alarmas, se van los cazadores y los soldados vuelven a su puesto.
@@ -716,6 +789,9 @@ impl Game {
                 self.ev(GameEvent::Tracer { a: muzzle, b: end, color: tracer_color, life: if pierce { 0.18 } else { 0.05 } });
             }
         }
+        if any_crit {
+            self.crits += 1;
+        }
         if any_kill {
             self.ev(GameEvent::Mark(Mark::Kill));
         } else if any_hit {
@@ -769,6 +845,7 @@ impl Game {
         self.step_gadgets(dt);
         self.step_people(level, t.pos, dt);
         self.step_director(level, t.pos, dt);
+        self.step_trains(level, Vec3::new(t.pos.x, t.feet, t.pos.z), dt);
         self.step_enemy_cars(level, t.pos, t.body, t.light, dt);
         // cadáveres que caen
         for c in &mut self.corpses {
@@ -944,7 +1021,7 @@ impl Game {
                 AiEvent::Alarm { op, pos } => self.raise_alarm(op, pos, level),
                 AiEvent::Spotted => {
                     let near = level.city.as_ref().and_then(|c| {
-                        let done = self.city.as_ref().map(|r| r.ops.iter().map(|o| o.done).collect::<Vec<_>>()).unwrap_or_default();
+                        let done = self.city.as_ref().map(|r| r.ops.iter().map(|o| o.done || o.asleep).collect::<Vec<_>>()).unwrap_or_default();
                         c.outposts.iter().enumerate().filter(|(i, _)| !done.get(*i).copied().unwrap_or(false)).min_by(|a, b| (a.1.cx - t.pos.x).hypot(a.1.cz - t.pos.z).total_cmp(&(b.1.cx - t.pos.x).hypot(b.1.cz - t.pos.z))).map(|(i, _)| i)
                     });
                     if let Some(op) = near {
