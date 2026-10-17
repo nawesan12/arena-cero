@@ -110,7 +110,12 @@ fn draw(
     mut bracer: Query<&mut Transform, (With<Bracer>, Without<Cable>, Without<Claw>, Without<BracerLight>)>,
     mut light: Query<&mut Transform, (With<BracerLight>, Without<Cable>, Without<Claw>, Without<Bracer>)>,
     mut kick: Local<f32>,
+    game: Res<crate::game::GameRes>,
+    mut bracer_vis: Query<&mut Visibility, (With<Bracer>, Without<Cable>, Without<Claw>)>,
 ) {
+    for mut v in &mut bracer_vis {
+        *v = if game.0.driving.is_some() { Visibility::Hidden } else { Visibility::Inherited };
+    }
     let Ok(ct) = cam.single() else { return };
     let dt = time.delta_secs();
     // culatazo del lanzador al disparar

@@ -14,6 +14,7 @@ pub mod objectives;
 pub mod perks;
 pub mod player;
 pub mod rng;
+pub mod vehicle;
 pub mod weapons;
 pub mod world;
 

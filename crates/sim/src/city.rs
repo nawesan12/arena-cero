@@ -123,6 +123,8 @@ pub struct CityData {
     pub safe_pos: Vec3,
     /// Rutas de los drones de vigilancia, por las avenidas.
     pub drone_routes: Vec<Vec<[f32; 2]>>,
+    /// Autos de la calle que se pueden manejar: (posición, rumbo, color).
+    pub vehicles: Vec<(Vec3, f32, u8)>,
 }
 
 #[derive(Clone, Copy)]
@@ -958,6 +960,7 @@ pub fn build(w: &mut World) -> CityData {
         }
     }
     // autos abandonados en las calles
+    let mut vehicles = Vec::new();
     for _ in 0..70 {
         let s = streets[b.r.idx(streets.len())];
         let t = b.r.signed() * (a - 14.0);
@@ -967,8 +970,9 @@ pub fn build(w: &mut World) -> CityData {
         if (z + 22.0).abs() < 7.0 && ax {
             continue;
         }
-        let m = b.mat_car();
-        b.car(x, z, ax, m, 0.0);
+        // en la web eran decorado; acá se pueden manejar (los de la autopista siguen fijos)
+        let Mat::Car(c) = b.mat_car() else { unreachable!() };
+        vehicles.push((Vec3::new(x, 0.0, z), if ax { std::f32::consts::FRAC_PI_2 } else { 0.0 }, c));
     }
     // autopista elevada sobre la calle z = -22, con autos arriba
     b.highway(-22.0, -118.0, 118.0, 7.14);
@@ -1065,7 +1069,7 @@ pub fn build(w: &mut World) -> CityData {
         vec![[66.0, -110.0], [66.0, 110.0], [110.0, 110.0], [110.0, -110.0]],
         vec![[-66.0, 66.0], [-156.0, 66.0], [-156.0, 110.0], [-66.0, 110.0]],
     ];
-    CityData { outposts, safe_pos, drone_routes }
+    CityData { outposts, safe_pos, drone_routes, vehicles }
 }
 
 #[cfg(test)]

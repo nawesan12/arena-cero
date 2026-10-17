@@ -20,6 +20,7 @@ mod quality;
 mod render_scale;
 mod tacmap;
 mod textures;
+mod vehicles_view;
 mod world_render;
 
 use arena_sim::{MapId, build_level};
@@ -77,7 +78,7 @@ fn main() {
             ..default()
         }))
         .insert_resource(args)
-        .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin, render_scale::RenderScalePlugin, gun::GunPlugin, fx::FxPlugin, audio::AudioSynthPlugin, enemies_view::EnemiesViewPlugin, markers::MarkersPlugin, perks::PerksPlugin, tacmap::TacMapPlugin, hook_view::HookViewPlugin))
+        .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin, render_scale::RenderScalePlugin, gun::GunPlugin, fx::FxPlugin, audio::AudioSynthPlugin, enemies_view::EnemiesViewPlugin, markers::MarkersPlugin, perks::PerksPlugin, tacmap::TacMapPlugin, hook_view::HookViewPlugin, vehicles_view::VehiclesViewPlugin))
         .add_systems(PreStartup, setup)
         .add_systems(Update, (world_render::follow_sky, world_render::animate_lava, auto_shot, bench))
         .run();
@@ -101,7 +102,16 @@ fn setup(mut commands: Commands, args: Res<Args>, mut quality: ResMut<quality::Q
     quality.dirty = true;
     // en modo captura no se toma el mouse: la ventana puede quedar debajo de otras
     settings.input = args.shot.is_none();
-    commands.insert_resource(game::GameRes(arena_sim::game::Game::new(&mut level, 7), 0));
+    let mut g = arena_sim::game::Game::new(&mut level, 7);
+    // con ARENA_DRIVE=1 arranca manejando el auto más cercano al inicio (para capturas de prueba)
+    if std::env::var_os("ARENA_DRIVE").is_some() {
+        let s = level.info.start;
+        g.driving = (0..g.vehicles.len()).min_by(|&a, &b| {
+            let d = |i: usize| (g.vehicles[i].pos.x - s[0]).hypot(g.vehicles[i].pos.z - s[1]);
+            d(a).total_cmp(&d(b))
+        });
+    }
+    commands.insert_resource(game::GameRes(g, 0));
     commands.init_resource::<game::UiFeed>();
     let res = world_render::LevelRes(level);
     player::spawn_player(&mut commands, &res, args.at, args.weapon);

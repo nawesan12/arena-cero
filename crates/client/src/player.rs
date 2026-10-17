@@ -13,6 +13,7 @@ use arena_sim::rng::Rng;
 use arena_sim::enemies::Target;
 use arena_sim::game::{Game, GameEvent, Mark, Snd};
 use arena_sim::objectives::Actor;
+use arena_sim::vehicle::DriveInput;
 use arena_sim::maps::Level;
 use arena_sim::weapons::{Arsenal, WEAPONS, WeaponEvent, WeaponInput};
 use arena_sim::{PlayerEvent, PlayerInput, PlayerState, TICK};
@@ -271,7 +272,20 @@ fn step_player(
     let aim_before = lp.state.aim_t;
     let mut pev = std::mem::take(&mut lp.events);
     pev.clear();
-    lp.state.step(&input, &level.world, TICK, &mut pev);
+    let was_driving = game.driving;
+    if let Some(vi) = was_driving {
+        // manejando: W/S acelerador, A/D dirección, Espacio freno; el jugador va con el auto
+        let din = DriveInput { throttle: input.forward, steer: input.right, brake: playing && key.pressed(KeyCode::Space) };
+        game.drive(level, &din, TICK);
+        let v = &game.vehicles[vi];
+        lp.state.pos = v.pos + Vec3::Y * 1.6;
+        lp.state.vel = v.forward() * v.speed;
+        lp.state.on_ground = true;
+        lp.state.hook = None;
+        lp.state.crouch_t = 0.0;
+    } else {
+        lp.state.step(&input, &level.world, TICK, &mut pev);
+    }
     for e in &pev {
         match *e {
             PlayerEvent::Burn(d) => {
@@ -303,6 +317,7 @@ fn step_player(
     // armas: las granadas van a la partida, que también resuelve los disparos contra enemigos
     let mut wev = Vec::new();
     let (arsenal, state, rng) = (&mut lp.arsenal, &mut lp.state, &mut lp.rng);
+    let winput = if was_driving.is_some() { WeaponInput::default() } else { winput };
     arsenal.step(&winput, state, &mut game.nades, rng, TICK, &mut wev);
     let cam_rot = Quat::from_euler(EulerRot::YXZ, lp.state.yaw, lp.state.pitch, 0.0);
     let muzzle = lp.state.eye() + cam_rot * rig.muzzle_cam;
@@ -368,6 +383,7 @@ fn step_player(
                 Snd::Objective => snd.play(S::Objective),
                 Snd::Beep => snd.play(S::Beep),
                 Snd::Tag => snd.play(S::Tag),
+                Snd::Crash => snd.play(S::Crash),
             },
             GameEvent::Burst { pos, color, n, speed, life } => fx.burst(pos, color, n, speed, life),
             GameEvent::Tracer { a, b, color, life } => fx.tracer(a, b, color, life),
@@ -393,6 +409,15 @@ fn step_player(
             GameEvent::OfferPerk => {
                 perks.offer(&mut lp.rng);
                 snd.play(S::Perk);
+            }
+            GameEvent::ExitVehicle => {
+                if let Some(v) = was_driving.and_then(|i| game.vehicles.get(i)) {
+                    let p = v.exit_spot(&level.world);
+                    lp.state.pos = p + Vec3::Y * EYE;
+                    lp.state.vel = Vec3::ZERO;
+                    lp.prev = lp.state.pos;
+                    look.yaw = v.yaw + std::f32::consts::PI;
+                }
             }
             GameEvent::WaveCleared => lp.arsenal.nades = (lp.arsenal.nades + 1).min(lp.arsenal.max_nades),
             GameEvent::Score { points, label } => {
@@ -478,12 +503,49 @@ fn player_down(lp: &mut LocalPlayer, game: &mut Game, level: &mut Level, ui: &mu
     }
 }
 
-fn place_camera(time: Res<Time>, fixed: Res<Time<Fixed>>, mut look: ResMut<Look>, lp: Res<LocalPlayer>, mut cam: Query<(&mut Transform, &mut Projection), With<MainCamera>>) {
+#[allow(clippy::too_many_arguments)]
+fn place_camera(
+    time: Res<Time>,
+    fixed: Res<Time<Fixed>>,
+    mut look: ResMut<Look>,
+    lp: Res<LocalPlayer>,
+    game: Res<GameRes>,
+    level: Res<LevelRes>,
+    mut cam: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
+    mut chase: Local<Option<Vec3>>,
+) {
     let Ok((mut t, mut proj)) = cam.single_mut() else { return };
+    let dt = time.delta_secs();
+    // manejando: cámara en tercera persona que sigue al auto y se puede girar con el mouse
+    if let Some(v) = game.0.driving.and_then(|i| game.0.vehicles.get(i)) {
+        let behind = v.yaw + std::f32::consts::PI;
+        let mut d = (behind - look.yaw).rem_euclid(std::f32::consts::TAU);
+        if d > std::f32::consts::PI {
+            d -= std::f32::consts::TAU;
+        }
+        // vuelve sola detrás del auto (más rápido cuanto más rápido va)
+        look.yaw += d * (dt * (1.0 + v.speed.abs() * 0.12)).min(1.0);
+        look.pitch = look.pitch.clamp(-0.7, 0.25);
+        let pitch = look.pitch - 0.18;
+        let dir = arena_sim::player::look_dir(look.yaw, pitch);
+        let pivot = v.pos + Vec3::Y * 1.9;
+        let free = level.0.world.ray(pivot, -dir, 7.5);
+        let want = pivot - dir * (free - 0.4).clamp(1.5, 7.0);
+        let cur = chase.get_or_insert(want);
+        *cur = cur.lerp(want, (dt * 12.0).min(1.0));
+        t.translation = *cur;
+        t.rotation = Quat::from_euler(EulerRot::YXZ, look.yaw, pitch, 0.0);
+        let fov = 75.0 + v.speed.abs() * 0.35;
+        look.fov += (fov - look.fov) * (dt * 4.0).min(1.0);
+        if let Projection::Perspective(p) = &mut *proj {
+            p.fov = look.fov.to_radians();
+        }
+        return;
+    }
+    *chase = None;
     let s = &lp.state;
     let a = fixed.overstep_fraction();
     let eye = lp.prev.lerp(s.eye(), a);
-    let dt = time.delta_secs();
     let target = s.target_fov(lp.arsenal.w == 2);
     look.fov += (target - look.fov) * (dt * 20.0).min(1.0);
     let sh = s.shake * s.shake * 0.035;

@@ -261,6 +261,7 @@ pub enum S {
     Slide,
     Toss,
     Beep,
+    Crash,
 }
 
 fn render(s: S) -> Pcm {
@@ -369,15 +370,45 @@ fn render(s: S) -> Pcm {
         S::Slide => b.noise(0.0, 700.0, 0.4, 0.45, 0.25, Low),
         S::Toss => b.noise(0.0, 1200.0, 1.0, 0.12, 0.15, Band),
         S::Beep => b.tone(0.0, Sine, 1400.0, 1400.0, 0.04, 0.08),
+        S::Crash => {
+            b.noise(0.0, 400.0, 0.6, 0.5, 0.9, Low);
+            b.noise(0.0, 2500.0, 0.8, 0.25, 0.3, Band);
+            b.tone(0.0, Sine, 90.0, 30.0, 0.4, 0.6);
+        }
     }
     b.into_pcm(MASTER, false)
 }
 
-const ALL: [S; 34] = [
+const ALL: [S; 35] = [
     S::Shot(0), S::Shot(1), S::Shot(2), S::Siren, S::Whiz, S::EShot, S::EShotBig, S::AlertBeep, S::Tag, S::Takedown, S::Plant, S::Objective,
     S::Ricochet, S::Hit, S::Crit, S::Hook, S::HookMiss, S::Launch, S::Dash, S::Perk, S::Boss, S::Kill, S::Boom, S::Enemy, S::Hurt, S::Reload,
-    S::Pickup, S::Empty, S::Aim, S::Swap, S::DJump, S::Slide, S::Toss, S::Beep,
+    S::Pickup, S::Empty, S::Aim, S::Swap, S::DJump, S::Slide, S::Toss, S::Beep, S::Crash,
 ];
+
+/// Motor: loop de 1 s con frecuencias enteras (fase continua al repetir). La velocidad de
+/// reproducción sube el tono según lo rápido que va el auto.
+fn engine_loop() -> Pcm {
+    let n = SR as usize;
+    let mut out = vec![0.0f32; n];
+    let mut lp = Biquad::new(Filt::Low, 420.0, 0.9);
+    let mut bp = Biquad::new(Filt::Band, 180.0, 1.2);
+    let mut b = Buf::new(0.0);
+    for (k, v) in out.iter_mut().enumerate() {
+        let t = k as f32 / SR as f32;
+        let saw = 2.0 * (t * 55.0).fract() - 1.0;
+        let sq = if (t * 110.0).fract() < 0.5 { 1.0 } else { -1.0 };
+        let wob = 1.0 + (t * std::f32::consts::TAU * 6.0).sin() * 0.15;
+        *v = lp.run(saw * 0.5 + sq * 0.15) * wob + bp.run(b.white()) * 0.25;
+    }
+    // el filtro arranca en cero: copiar el final sobre el principio para que el loop no haga clic
+    let fade = 400;
+    for i in 0..fade {
+        let k = i as f32 / fade as f32;
+        out[i] = out[i] * k + out[n - fade + i] * (1.0 - k);
+    }
+    out.truncate(n - fade);
+    Pcm { samples: out.into(), looped: true }
+}
 
 /* ---------- música ---------- */
 
@@ -435,9 +466,13 @@ fn music_loop(level: u32) -> Pcm {
 pub struct Sounds {
     map: HashMap<S, Handle<Pcm>>,
     queue: Vec<(S, f32)>,
+    engine: Option<Handle<Pcm>>,
 }
 
 impl Sounds {
+    pub fn engine(&self) -> Option<Handle<Pcm>> {
+        self.engine.clone()
+    }
     /// Reproduce un efecto (volumen relativo 1 = como en la web).
     pub fn play(&mut self, s: S) {
         self.queue.push((s, 1.0));
@@ -472,7 +507,7 @@ impl Plugin for AudioSynthPlugin {
 fn setup_audio(mut commands: Commands, mut pcm: ResMut<Assets<Pcm>>) {
     let t0 = std::time::Instant::now();
     let map = ALL.iter().map(|&s| (s, pcm.add(render(s)))).collect();
-    commands.insert_resource(Sounds { map, queue: Vec::new() });
+    commands.insert_resource(Sounds { map, queue: Vec::new(), engine: Some(pcm.add(engine_loop())) });
     for l in 0..4u8 {
         let h = pcm.add(music_loop(u32::from(l)));
         commands.spawn((AudioPlayer(h), PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0)), MusicLayer(l)));

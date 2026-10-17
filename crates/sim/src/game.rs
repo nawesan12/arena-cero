@@ -37,6 +37,7 @@ pub enum Snd {
     Objective,
     Beep,
     Tag,
+    Crash,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -70,6 +71,8 @@ pub enum GameEvent {
     OfferPerk,
     /// Oleada despejada (+1 granada).
     WaveCleared,
+    /// El jugador se bajó del auto (el cliente lo ubica al costado).
+    ExitVehicle,
     /// Puntos ganados (para el "+120" junto a la mira).
     Score { points: u32, label: &'static str },
 }
@@ -134,6 +137,10 @@ pub struct Game {
     pub events: Vec<GameEvent>,
     /// Daño acumulado por enemigo en este paso, para el número flotante.
     nums: Vec<(u32, f32, bool)>,
+    pub vehicles: Vec<crate::vehicle::Vehicle>,
+    /// Auto que maneja el jugador.
+    pub driving: Option<usize>,
+    engine_noise_t: f32,
 }
 
 impl Game {
@@ -162,6 +169,9 @@ impl Game {
             nav: Vec::new(),
             events: Vec::new(),
             nums: Vec::new(),
+            vehicles: Vec::new(),
+            driving: None,
+            engine_noise_t: 0.0,
         };
         if let Some(c) = level.city.as_ref() {
             g.init_city(c.clone(), &mut level.world);
@@ -203,6 +213,10 @@ impl Game {
                 run.turret_cols.push((id, world.add_collider(t.x, t.z, 0.9, 1.4, 0.9, 0.16)));
                 self.enemies.push(e);
             }
+        }
+        for &(p, yaw, color) in &c.vehicles {
+            let id = self.id();
+            self.vehicles.push(crate::vehicle::Vehicle::new(id, p, yaw, color, world));
         }
         for (i, route) in c.drone_routes.iter().enumerate() {
             let id = self.id();
@@ -309,6 +323,11 @@ impl Game {
 
     /// Saca del mundo lo que agregó la partida (colisionadores de torretas) antes de descartarla.
     pub fn teardown(&mut self, world: &mut World) {
+        for v in &mut self.vehicles {
+            if let Some(c) = v.col.take() {
+                world.remove_collider(c);
+            }
+        }
         if let Some(c) = self.city.as_mut() {
             for (_, col) in c.turret_cols.drain(..) {
                 world.remove_collider(col);
@@ -318,6 +337,7 @@ impl Game {
 
     /// Al caer en la ciudad: se calman las alarmas, se van los cazadores y los soldados vuelven a su puesto.
     pub fn on_player_down(&mut self) {
+        self.driving = None;
         self.shots.clear();
         self.nades.retain(|n| !n.enemy);
         if let Some(run) = self.city.as_mut() {
@@ -956,5 +976,55 @@ mod tests {
         // la oleada 1 trae round(3 + 1,5) = 5 drones
         assert!(g.kills >= 5, "bajas: {}", g.kills);
         assert!(g.score > 0);
+    }
+}
+
+impl Game {
+    /// Un paso de manejo del auto que lleva el jugador: física, atropellos y ruido del motor.
+    pub fn drive(&mut self, level: &mut Level, input: &crate::vehicle::DriveInput, dt: f32) {
+        let Some(vi) = self.driving else { return };
+        let impact = self.vehicles[vi].drive(input, &mut level.world, dt);
+        let v = self.vehicles[vi].clone();
+        if impact > 12.0 {
+            self.events.push(GameEvent::Shake((impact / 30.0).min(0.8)));
+            self.events.push(GameEvent::Sound(Snd::Crash));
+            self.make_noise(v.pos, 40.0);
+            if impact > 22.0 {
+                self.events.push(GameEvent::Hurt { dmg: ((impact - 20.0) * 1.5).round(), from: None });
+            }
+        }
+        // atropellos: soldados delante o al costado del auto, a más de 6 m/s
+        if v.speed.abs() > 6.0 {
+            let f = v.forward();
+            for i in 0..self.enemies.len() {
+                let e = &self.enemies[i];
+                if !e.alive() || !e.is_soldier() || (e.pos.y - v.pos.y).abs() > 1.5 {
+                    continue;
+                }
+                let rel = e.pos - v.pos;
+                let along = rel.dot(f);
+                let side = rel.dot(v.right());
+                if along.abs() < 2.6 && side.abs() < 1.4 {
+                    let dmg = v.speed.abs() * 0.8;
+                    let dir = (f * v.speed.signum() + Vec3::Y * 0.3).normalize();
+                    let p = e.pos + Vec3::Y;
+                    self.events.push(GameEvent::Burst { pos: p, color: 0xff3d5a, n: 12, speed: 6.0, life: 0.5 });
+                    if self.damage(i, dmg, Some(dir), false, v.pos, level) {
+                        self.events.push(GameEvent::Mark(Mark::Kill));
+                    }
+                }
+            }
+        }
+        // el motor se oye: los soldados cercanos van a ver qué pasa
+        self.engine_noise_t -= dt;
+        if self.engine_noise_t <= 0.0 && v.speed.abs() > 2.0 {
+            self.engine_noise_t = 1.0;
+            self.make_noise(v.pos, 22.0 + v.speed.abs());
+        }
+    }
+
+    /// Auto cercano para subirse con F (a menos de 3,2 m del centro).
+    pub fn vehicle_near(&self, pos: Vec3) -> Option<usize> {
+        self.vehicles.iter().position(|v| (v.pos.x - pos.x).hypot(v.pos.z - pos.z) < 3.2 && (v.pos.y - (pos.y - 1.6)).abs() < 1.5)
     }
 }

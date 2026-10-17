@@ -103,8 +103,15 @@ fn animate_gun(
     mut lights: Query<&mut PointLight>,
     mut cam: Query<&mut Projection, With<GunCamera>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
+    game: Res<crate::game::GameRes>,
 ) {
     let dt = time.delta_secs();
+    if let Ok(mut v) = vis.get_mut(rig.root) {
+        let want = if game.0.driving.is_some() || crate::off("gun") { Visibility::Hidden } else { Visibility::Inherited };
+        if *v != want {
+            *v = want;
+        }
+    }
     let (p, a) = (&lp.state, &lp.arsenal);
     let w = a.w;
     // modelo visible (cambia a mitad de la animación de cambio, como en la web)

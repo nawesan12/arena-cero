@@ -15,6 +15,8 @@ pub enum Interact {
     Takedown { enemy: usize },
     Objective { op: usize, time: f32 },
     Supply { ready: bool, cd: f32 },
+    /// Subirse a un auto.
+    Drive { vehicle: usize },
 }
 
 /// Cartel de interacción para la interfaz.
@@ -100,7 +102,7 @@ impl Game {
                 return Some(Interact::Supply { ready: run.obj.supply_cd <= 0.0, cd: run.obj.supply_cd });
             }
         }
-        None
+        self.vehicle_near(a.pos).map(|vehicle| Interact::Drive { vehicle })
     }
 
     /// Un paso de la interacción y de las cargas. Llamar después de `step`.
@@ -108,16 +110,27 @@ impl Game {
         if self.city.is_none() {
             return;
         }
-        let found = self.find_interact(level, a);
+        let driving = self.driving.is_some();
+        let found = if driving { None } else { self.find_interact(level, a) };
         let run = self.city.as_mut().unwrap();
         run.obj.supply_cd -= dt;
         let pressed = a.f_held && !run.obj.f_was;
         run.obj.f_was = a.f_held;
+        if driving {
+            run.obj.prompt = Some(Prompt { label: "F · BAJAR".into(), frac: None });
+            if pressed {
+                self.driving = None;
+                self.events.push(GameEvent::ExitVehicle);
+            }
+            self.step_charge(level, a, dt);
+            return;
+        }
         let c = level.city.as_ref().unwrap();
         run.obj.prompt = found.as_ref().map(|i| match i {
             Interact::Takedown { .. } => Prompt { label: "F · NEUTRALIZAR EN SILENCIO".into(), frac: None },
             Interact::Objective { op, time } => Prompt { label: format!("MANTENÉ F · {}", c.outposts[*op].task.to_uppercase()), frac: Some((run.obj.hold_t / time).min(1.0)) },
             Interact::Supply { ready, cd } => Prompt { label: if *ready { "F · REABASTECERSE".into() } else { format!("REABASTECIMIENTO LISTO EN {} S", cd.ceil()) }, frac: None },
+            Interact::Drive { .. } => Prompt { label: "F · MANEJAR".into(), frac: None },
         });
         // mantener F en un objetivo
         match found {
@@ -148,6 +161,10 @@ impl Game {
                     let hp = self.enemies[enemy].hp;
                     self.damage(enemy, hp + 1.0, None, true, a.pos, level);
                     self.events.push(GameEvent::Mark(Mark::Kill));
+                }
+                Some(Interact::Drive { vehicle }) => {
+                    self.driving = Some(vehicle);
+                    self.events.push(GameEvent::Sound(Snd::Pickup));
                 }
                 Some(Interact::Supply { ready: true, .. }) => {
                     self.city.as_mut().unwrap().obj.supply_cd = 20.0;
