@@ -7,11 +7,6 @@ use crate::world_render::LevelRes;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
 
-/// Calles en orden de coordenada (−242 … 242): las que van de norte a sur (x fija)…
-const NS: [&str; 12] = ["Av. del Oeste", "Calle Lavalle", "Av. Las Heras", "Calle Tucumán", "Calle Viamonte", "Av. Córdoba", "Calle Paraguay", "Av. Santa Fe", "Calle Charcas", "Av. del Este", "Calle Juncal", "Av. Costanera"];
-/// …y las que van de este a oeste (z fija).
-const EW: [&str; 12] = ["Av. del Puerto", "Calle Reconquista", "Av. Norte", "Calle San Martín", "Calle Florida", "Av. de Mayo", "Calle Belgrano", "Calle Moreno", "Calle Alsina", "Av. Sur", "Calle Garay", "Av. de los Jardines"];
-
 pub struct StreetsUiPlugin;
 
 impl Plugin for StreetsUiPlugin {
@@ -57,17 +52,20 @@ fn update(
     }
     let me = lp.state.pos;
     // esquina más cercana
-    let near = |v: f32| c.streets.iter().enumerate().min_by(|a, b| (a.1 - v).abs().total_cmp(&(b.1 - v).abs())).map(|(i, s)| (i, *s));
-    let (Some((ix, sx)), Some((iz, sz))) = (near(me.x), near(me.z)) else { return hide(&mut signs) };
-    if (me.x - sx).hypot(me.z - sz) > 26.0 {
+    use arena_sim::city::town::{XS, ZS};
+    let _ = c;
+    let near = |list: &[arena_sim::city::town::St], v: f32| list.iter().min_by(|a, b| (a.c - v).abs().total_cmp(&(b.c - v).abs())).copied();
+    let (Some(stx), Some(stz)) = (near(&XS, me.x), near(&ZS, me.z)) else { return hide(&mut signs) };
+    let (sx, sz) = (stx.c, stz.c);
+    if (me.x - sx).abs() > stx.w / 2.0 + 14.0 || (me.z - sz).abs() > stz.w / 2.0 + 14.0 {
         return hide(&mut signs);
     }
     let Ok((camera, ct)) = cam.single() else { return };
     let k = target.map_or(1.0, |t| win.width() / t.size.x.max(1) as f32);
     // cada cartel en la esquina de la vereda más cercana, a 3 m de altura
-    let cx = sx + if me.x > sx { 6.5 } else { -6.5 };
-    let cz = sz + if me.z > sz { 6.5 } else { -6.5 };
-    let items = [(Vec3::new(cx, 3.2, cz), NS.get(ix).copied().unwrap_or("")), (Vec3::new(cx, 2.7, cz), EW.get(iz).copied().unwrap_or(""))];
+    let cx = sx + if me.x > sx { stx.w / 2.0 + 0.5 } else { -stx.w / 2.0 - 0.5 };
+    let cz = sz + if me.z > sz { stz.w / 2.0 + 0.5 } else { -stz.w / 2.0 - 0.5 };
+    let items = [(Vec3::new(cx, 3.2, cz), stx.name), (Vec3::new(cx, 2.7, cz), stz.name)];
     for (s, mut n, mut v) in &mut signs {
         let (p, _) = items[s.0];
         match camera.world_to_viewport(ct, p) {

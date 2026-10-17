@@ -61,6 +61,14 @@ pub enum Mat {
     Grass,
     /// Agua del río (opaca, a diferencia de `Water`).
     Sea,
+    /// Asfalto (diagonales, encima del piso).
+    Asphalt,
+    /// Fachada con ventanas: estilo × 4 + color (0-3 clásica, 4-7 moderna, 8-11 ladrillo, 12 arcos de dock).
+    Front(u8),
+    /// Planta baja con vidriera o puerta (0..6).
+    Shop(u8),
+    /// Chapa acanalada pintada de El Cerro (0..6).
+    Chapa(u8),
 }
 
 pub const FACADES: u8 = 8;

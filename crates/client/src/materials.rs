@@ -37,6 +37,8 @@ struct Tex {
     glass: Handle<Image>,
     brick: Handle<Image>,
     grass: Handle<Image>,
+    fronts: [Handle<Image>; 4],
+    shop: Handle<Image>,
     panel: Handle<Image>,
     billboards: [Handle<Image>; 4],
     pub sky_city: Handle<Image>,
@@ -82,6 +84,8 @@ impl Looks {
             glass: images.add(textures::glass()),
             brick: images.add(textures::brick()),
             grass: images.add(textures::grass()),
+            fronts: [0, 1, 2, 3].map(|k| images.add(textures::front(k))),
+            shop: images.add(textures::shopfront()),
             panel: images.add(textures::panel()),
             billboards: [0, 1, 2, 3].map(|k| images.add(textures::billboard(k))),
             sky_city: images.add(textures::sky(true)),
@@ -172,6 +176,14 @@ impl Looks {
             Mat::Bollard => (lit(0x30363a, 0.45, 0.7), None),
             Mat::Grass => (tex(&t.grass, 0xffffff, 0.95, 0.0), Some(2.0)),
             Mat::Sea => (lit(0x2c6a80, 0.12, 0.05), None),
+            Mat::Asphalt => (tex(&t.asphalt, 0xffffff, 0.92, 0.0), Some(4.0)),
+            Mat::Front(i) => {
+                let style = (i / 4).min(3);
+                let tint = [[0xffffff, 0xf2e6d2, 0xe9dcd8, 0xe6e2da], [0xffffff, 0xe0e6ea, 0xece6dc, 0xd8dcd6], [0xffffff, 0xf4ece6, 0xe8dcd4, 0xfff6ee], [0xffffff; 4]][style as usize][i as usize % 4];
+                (tex(&t.fronts[style as usize], tint, 0.85, 0.0), Some(3.4))
+            }
+            Mat::Shop(i) => (tex(&t.shop, [0xd94a3a, 0x3a8fd9, 0xe8c23a, 0x4ab06a, 0xe07a2a, 0xf0f0f0][i as usize % 6], 0.6, 0.0), Some(3.4)),
+            Mat::Chapa(i) => (tex(&t.corr, [0xd94a3a, 0x3a8fd9, 0xe8c23a, 0x4ab06a, 0xe07a2a, 0x9a5ad0][i as usize % 6], 0.7, 0.2), Some(2.4)),
         }
     }
 }

@@ -6,6 +6,7 @@
 //!
 //! Todo es simulación: el cliente solo muestra `objective`, `marks`, la radio y el resultado.
 
+use crate::city::town::{XS, ZS, block_center};
 use crate::city::{CityData, Outpost, OutpostId, Role, UnitSpec};
 use crate::enemies::{Alert, DroneKind, Kind, SoldierKind, new_drone, new_soldier};
 use crate::game::{Game, GameEvent, Setup, Snd};
@@ -217,6 +218,20 @@ fn v(x: f32, y: f32, z: f32) -> Vec3 {
     Vec3::new(x, y, z)
 }
 
+/// Eje de la calle i (norte-sur) y de la j (este-oeste).
+fn sx(i: usize) -> f32 {
+    XS[i].c
+}
+fn sz(j: usize) -> f32 {
+    ZS[j].c
+}
+
+/// Vuelta por los carriles de la derecha alrededor de las manzanas entre las calles i0..i1 y j0..j1.
+fn loop_route(i0: usize, i1: usize, j0: usize, j1: usize) -> Vec<Vec2> {
+    let l = 4.2;
+    vec![v2(sx(i0) + l, sz(j0) + l), v2(sx(i1) - l, sz(j0) + l), v2(sx(i1) - l, sz(j1) - l), v2(sx(i0) + l, sz(j1) - l)]
+}
+
 fn v2(x: f32, z: f32) -> Vec2 {
     Vec2::new(x, z)
 }
@@ -266,16 +281,16 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
             place: "Barrio Oeste · 09:00",
             hour: 9.0,
             par: 170.0,
-            start: v(-66.0, 0.16, 120.0),
+            start: v(sx(3), 0.16, sz(7) - 20.0),
             steps: vec![
-                step("Corré hasta la esquina marcada", Reach { pos: v(-66.0, 0.0, 66.0), r: 5.0 })
+                step("Corré hasta la esquina marcada", Reach { pos: v(sx(3), 0.0, sz(6)), r: 5.0 })
                     .say(&[vera("Acá Vera. Te escucho fuerte y claro. Bienvenido al Distrito Sur."), vera("Antes de meternos en serio, quiero ver cómo te movés. Corré hasta la esquina: Shift para correr.")]),
                 step("Subí a una azotea con el gancho (E)", Climb(6.0)).say(&[vera("Bien. Ahora el gancho: apuntá a un borde alto y apretá E. Con Shift recogés cuerda, con Espacio te soltás con impulso.")]),
                 step("Neutralizá al vigía (por la espalda, F)", KillTargets)
-                    .act(guard(v(-22.0, 0.16, 70.0), PI))
+                    .act(guard(v(sx(3) + 3.0, 0.16, sz(6) - 25.0), PI))
                     .say(&[vera("Hay un vigía solo en la esquina de la avenida. Mira hacia el norte."), vera("Acercate por detrás, agachado con C, y apretá F. Si te ve, resolvelo como puedas.")]),
-                step("Subí al auto (F)", Drive).act(ParkedCar { pos: v(-17.8, 0.0, 82.0), yaw: 0.0 }).say(&[vera("Limpio. Te dejé un auto en la avenida: subite con F.")]),
-                step("Manejá hasta el refugio", Reach { pos: v(-110.0, 0.0, 110.0), r: 7.0 }).say(&[vera("W acelera, S frena, Espacio es el freno de mano. Llevalo hasta el refugio, al oeste.")]),
+                step("Subí al auto (F)", Drive).act(ParkedCar { pos: v(sx(3) - 4.6, 0.0, sz(6) - 38.0), yaw: 0.0 }).say(&[vera("Limpio. Te dejé un auto en la avenida: subite con F.")]),
+                step("Manejá hasta el refugio", Reach { pos: v(sx(2), 0.0, sz(7)), r: 8.0 }).say(&[vera("W acelera, S frena, Espacio es el freno de mano. Llevalo hasta el refugio, al oeste.")]),
                 step("Entrá al refugio y reabastecete (F)", Reach { pos: c.safe_pos, r: 2.6 }).say(&[vera("Bajate con F. Adentro del refugio te reabastecés: integridad, munición y granadas.")]),
             ],
             outro: vec![vera("Perfecto. Ya sabés lo básico. Esta noche empezamos a desarmarlos, puesto por puesto.")],
@@ -291,7 +306,7 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
             place: "Antena de comunicaciones · 17:30",
             hour: 17.5,
             par: 240.0,
-            start: v(-66.0, 0.16, 0.0),
+            start: v(sx(2) + 8.0, 0.16, cz),
             steps: vec![
                 step("Eliminá al oficial con la tarjeta de acceso", KillTargets)
                     .act(Wake(OutpostId::Antena))
@@ -320,7 +335,7 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
             place: "Subestación eléctrica · 22:00",
             hour: 22.0,
             par: 300.0,
-            start: v(66.0, 0.16, 30.0),
+            start: v(sx(7) + 8.0, 0.16, cz),
             steps: vec![
                 step("Eliminá al vigía de la puerta norte", KillTargets)
                     .act(Wake(OutpostId::Sub))
@@ -353,7 +368,7 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
             place: "Torre de oficinas · 11:00",
             hour: 11.0,
             par: 330.0,
-            start: v(22.0, 0.16, -110.0),
+            start: v(sx(7) + 8.0, 0.16, cz),
             steps: vec![
                 step("Entrá a la torre de oficinas", Reach { pos: v(cx + 2.0, 0.0, cz), r: 4.0 })
                     .act(Wake(OutpostId::Datos))
@@ -375,25 +390,25 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
     {
         let r = o(OutpostId::Arsenal);
         let (cx, cz) = (r.cx, r.cz);
-        let truck = vec![v2(160.0, 114.2), v2(-105.8, 114.2), v2(-105.8, -105.8), v2(160.0, -105.8)];
+        let truck = vec![v2(250.0, sz(6) + 4.2), v2(sx(1) + 4.2, sz(6) + 4.2), v2(sx(1) + 4.2, sz(1) + 4.2), v2(250.0, sz(1) + 4.2)];
         v_ops.push(OpDef {
             name: OP_NAMES[4],
             place: "Arsenal · 14:00",
             hour: 14.0,
             par: 300.0,
-            start: v(66.0, 0.16, 96.0),
+            start: v(sx(5) + 2.0, 0.16, sz(6) + 18.0),
             steps: vec![
                 step("Detené el camión con el código", StopCars)
-                    .act(ParkedCar { pos: v(70.2, 0.0, 90.0), yaw: PI })
+                    .act(ParkedCar { pos: v(sx(5) - 4.6, 0.0, sz(6) + 14.0), yaw: PI })
                     .act(Cars { route: truck, n: 1, hp: 30.0, crew: 0, flee: true, target: true, color: 1 })
                     .say(&[vera("El arsenal se abre con un código que cambia cada día. Lo lleva ese camión."), vera("Va a cruzar la calle de adelante tuyo. Si se te escapa, perdimos el código. Tenés un auto al lado.")]),
                 step("Tomá el código del camión", ReachWreck { r: 4.5 }).say(&[vera("¡Lo paraste! Revisá la cabina.")]),
                 step("Forzá el arsenal con el código", Outpost(OutpostId::Arsenal))
-                    .cp(v(22.0, 0.16, 110.0))
+                    .cp(v(sx(5), 0.16, sz(7)))
                     .act(Wake(OutpostId::Arsenal))
                     .say(&[vera("Código en mano. El arsenal está al oeste. Adentro hay un lanzagranadas con tu nombre.")]),
                 step("Escapá de los refuerzos", Escape { from: v(cx, 0.0, cz), r: 80.0 })
-                    .act(Cars { route: vec![v2(66.0 - 4.2, 66.0), v2(66.0 - 4.2, 150.0), v2(-66.0 + 4.2, 150.0), v2(-66.0 + 4.2, 66.0)], n: 2, hp: 18.0, crew: 2, flee: false, target: false, color: 3 })
+                    .act(Cars { route: loop_route(3, 6, 6, 8), n: 2, hp: 18.0, crew: 2, flee: false, target: false, color: 3 })
                     .say(&[vera("Vienen dos patrullas. Probá el lanzagranadas contra los autos: tecla 4.")]),
             ],
             outro: vec![vera("Ahora tenemos con qué pelear de igual a igual.")],
@@ -409,18 +424,18 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
             place: "Obra en construcción · 06:00",
             hour: 6.0,
             par: 300.0,
-            start: v(-22.0, 0.16, -88.0),
+            start: v(sx(6), 0.16, sz(2) + 12.0),
             steps: vec![
                 step("Subí a la cabina de la grúa (a 40 m)", Reach { pos: cab, r: 5.0 })
                     .act(Wake(OutpostId::Obra))
                     .say(&[vera("Amanece. Desde la cabina de la grúa se ve medio distrito."), vera("Engancháte de la pluma con E y subí. No mires abajo.")]),
                 step("Hackeá la grúa", Outpost(OutpostId::Obra)).cp(v(cab.x - 1.0, cab.y - 1.0, cab.z)).say(&[vera("Conectate al panel de la cabina.")]),
                 step("Marcá a los 5 cabecillas con T", TagTargets)
-                    .act(Squad { at: v(-66.0, 0.16, -120.0), n: 1, role: Role::Guard, op: None, hunt: false, target: true, yaw: None })
-                    .act(Squad { at: v(-22.0, 0.16, -142.0), n: 1, role: Role::Guard, op: None, hunt: false, target: true, yaw: None })
-                    .act(Squad { at: v(-44.0, 0.16, -108.0), n: 1, role: Role::Guard, op: None, hunt: false, target: true, yaw: None })
-                    .act(Squad { at: v(-66.0, 0.16, -156.0), n: 1, role: Role::Guard, op: None, hunt: false, target: true, yaw: None })
-                    .act(Squad { at: v(-8.0, 0.16, -110.0), n: 1, role: Role::Guard, op: None, hunt: false, target: true, yaw: None })
+                    .act(Squad { at: v(sx(5), 0.16, cz + 10.0), n: 1, role: Role::Guard, op: None, hunt: false, target: true, yaw: None })
+                    .act(Squad { at: v(sx(6), 0.16, cz - 10.0), n: 1, role: Role::Guard, op: None, hunt: false, target: true, yaw: None })
+                    .act(Squad { at: v(cx, 0.16, sz(1)), n: 1, role: Role::Guard, op: None, hunt: false, target: true, yaw: None })
+                    .act(Squad { at: v(cx + 10.0, 0.16, sz(2) - 6.0), n: 1, role: Role::Guard, op: None, hunt: false, target: true, yaw: None })
+                    .act(Squad { at: v(sx(5) + 3.0, 0.16, sz(1) + 3.0), n: 1, role: Role::Guard, op: None, hunt: false, target: true, yaw: None })
                     .say(&[vera("Tengo cinco cabecillas en la zona, pero no sé cuál es cuál. Buscalos desde arriba y marcalos con T.")]),
                 step("Eliminá a los 5 cabecillas", KillTargets).say(&[vera("Todos marcados. Desde ahí tenés buen ángulo: el riel atraviesa, tecla 3.")]),
             ],
@@ -432,13 +447,13 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
         let tr = o(OutpostId::Trenes);
         let (cx, cz) = (tr.cx, tr.cz);
         let tanks = vec![v(cx + 12.6, 1.0, cz + 9.0), v(cx - 2.2, 1.0, cz + 10.0), v(cx - 4.0, 1.0, cz - 0.6)];
-        let entrance = c.stations.first().map_or(v(198.0, 0.0, 198.0), |s| s.entrance);
+        let entrance = c.stations.first().map_or(v(0.0, 0.0, 0.0), |s| s.entrance);
         v_ops.push(OpDef {
             name: OP_NAMES[6],
             place: "Patio de trenes · 20:00",
             hour: 20.0,
             par: 330.0,
-            start: v(88.0, 0.16, 110.0),
+            start: v(sx(3), 0.16, sz(1) + 12.0),
             steps: vec![
                 step("Plantá cargas en los 3 tanques", Use { points: tanks.clone(), secs: 1.5, label: "PLANTAR LA CARGA" })
                     .act(Wake(OutpostId::Trenes))
@@ -446,9 +461,9 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
                 step("Plantá la carga principal", Outpost(OutpostId::Trenes)).say(&[vera("Ahora la principal. Cuando explote, corré.")]),
                 step("¡Escapá de los perseguidores!", Escape { from: v(cx, 0.0, cz), r: 60.0 })
                     .limit(40.0)
-                    .cp(v(cx - 22.0, 0.16, cz - 22.0))
+                    .cp(v(sx(3), 0.16, sz(1)))
                     .act(Booms(tanks))
-                    .act(Cars { route: vec![v2(110.0 - 4.2, 66.0), v2(110.0 - 4.2, 150.0), v2(160.0, 150.0), v2(160.0, 66.0)], n: 2, hp: 18.0, crew: 2, flee: false, target: false, color: 3 })
+                    .act(Cars { route: loop_route(1, 4, 1, 3), n: 2, hp: 18.0, crew: 2, flee: false, target: false, color: 3 })
                     .say(&[vera("¡Fuego en todo el patio! Sin combustible, no hay más drones."), (ENEMY, "¡Atacaron el depósito! ¡Persíganlo!")]),
                 step("Bajá al subte de la Plaza Mayor", Reach { pos: entrance, r: 4.0 }).say(&[vera("No los vas a perder en la calle. Bajá al subte de la Plaza Mayor: abajo no te ven.")]),
                 step("Tomá el tren (F en el andén)", Ride).say(&[vera("Esperá el tren y subite con F cuando abra las puertas. Elegí cualquier estación.")]),
@@ -460,32 +475,33 @@ pub fn ops(c: &CityData) -> Vec<OpDef> {
     {
         let m = o(OutpostId::Mando);
         let (cx, cz) = (m.cx, m.cz);
-        let plaza = v(198.0, 0.0, 198.0);
-        let armored = vec![v2(17.8, 4.0), v2(17.8, 105.8), v2(150.0, 105.8), v2(150.0, -105.8), v2(-105.8, -105.8), v2(-105.8, 105.8)];
+        let park = block_center(6, 7);
+        let plaza = v(park.x, 0.0, park.y);
+        let armored = vec![v2(sx(8) - 4.2, cz), v2(sx(8) - 4.2, sz(6) - 4.2), v2(sx(2) + 4.2, sz(6) - 4.2), v2(sx(2) + 4.2, sz(2) + 4.2), v2(sx(8) - 4.2, sz(2) + 4.2), v2(sx(8) - 4.2, sz(4) - 4.2)];
         v_ops.push(OpDef {
             name: OP_NAMES[7],
             place: "Puesto de mando · 17:00",
             hour: 17.0,
             par: 420.0,
-            start: v(-66.0, 0.16, 22.0),
+            start: v(sx(6), 0.16, sz(4) - 10.0),
             steps: vec![
                 step("Asaltá el puesto de mando", Reach { pos: v(cx, 0.0, cz), r: 24.0 })
                     .act(Wake(OutpostId::Mando))
                     .say(&[vera("Es la última. El comandante está en su puesto, en el centro del distrito."), vera("Sin antena, sin torretas y sin drones, está solo con su guardia. Entrá.")]),
                 step("¡Detené el blindado del comandante!", StopCars)
-                    .cp(v(cx - 30.0, 0.16, cz + 22.0))
+                    .cp(v(sx(7) + 3.5, 0.16, sz(5) - 6.0))
                     .act(RemoveCommander)
                     .act(Cars { route: armored, n: 1, hp: 45.0, crew: 0, flee: true, target: true, color: 2 })
-                    .act(ParkedCar { pos: v(26.2, 0.0, -12.0), yaw: PI })
+                    .act(ParkedCar { pos: v(sx(8) + 4.6, 0.0, cz - 8.0), yaw: PI })
                     .say(&[(ENEMY, "¡Saquen al comandante! ¡Al blindado, ya!"), vera("¡Se escapa en un blindado! Hay un auto en la calle este. ¡Que no se te escape!")]),
                 step("Eliminá al comandante", Outpost(OutpostId::Mando)).act(WreckSquad { n: 2, commander: true }).say(&[vera("¡Lo paraste! Salió del blindado con su escolta. Terminalo.")]),
-                step("Llegá a la extracción (Plaza Mayor)", Reach { pos: plaza, r: 12.0 })
+                step("Llegá a la extracción (el Parque)", Reach { pos: plaza, r: 12.0 })
                     .act(Hunters { at: v(cx, 25.0, cz), n: 2 })
-                    .act(Cars { route: vec![v2(22.0 + 4.2, 66.0), v2(22.0 + 4.2, 150.0), v2(150.0, 150.0), v2(150.0, 66.0)], n: 1, hp: 18.0, crew: 2, flee: false, target: false, color: 3 })
-                    .say(&[vera("Se terminó. El helicóptero te espera en la Plaza Mayor, al sudeste. Lo que queda de ellos te va a buscar.")]),
+                    .act(Cars { route: loop_route(5, 7, 5, 7), n: 1, hp: 18.0, crew: 2, flee: false, target: false, color: 3 })
+                    .say(&[vera("Se terminó. El helicóptero te espera en el Parque, al sur de la Plaza Mayor. Lo que queda de ellos te va a buscar.")]),
                 step("Aguantá hasta que llegue el helicóptero", Hold { pos: plaza, r: 20.0, secs: 40.0, every: 9.0, n: 3, op: None })
-                    .cp(plaza + Vec3::new(-9.0, 0.0, -9.0))
-                    .say(&[vera("Cuarenta segundos. Aguantá en la plaza."), (ENEMY, "¡Está en la plaza! ¡Todos los que queden!")]),
+                    .cp(plaza + Vec3::new(-9.0, 0.0, -6.0))
+                    .say(&[vera("Cuarenta segundos. Aguantá en el parque."), (ENEMY, "¡Está en el parque! ¡Todos los que queden!")]),
             ],
             outro: vec![vera("Te veo. Subí... El Distrito Sur es libre. Gracias.")],
         });

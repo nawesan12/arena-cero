@@ -441,6 +441,126 @@ fn brick_canvas() -> Canvas {
     g
 }
 
+/// Fachadas con ventanas (nuevo). Una repetición = un piso de 3,4 m × un vano de 3,4 m.
+/// 0 clásica (ventana alta con persiana de madera y marco de piedra), 1 moderna (ventana corrida),
+/// 2 ladrillo con ventana de arco, 3 arcos de dock.
+pub fn front(style: u8) -> Image {
+    front_canvas(style).into_image()
+}
+
+fn front_canvas(style: u8) -> Canvas {
+    let s = 128;
+    let sf = s as f32;
+    let mut r = Rng::new(40 + u32::from(style));
+    match style {
+        0 => {
+            let mut g = Canvas::new(s, hex(0xf1ece2));
+            for _ in 0..900 {
+                let v = 215.0 + r.f() * 35.0;
+                g.rect(r.f() * sf, r.f() * sf, 2.0, 2.0, rgba(v, v - 4.0, v - 10.0, 0.4));
+            }
+            // losa del piso (línea de entrepiso) abajo
+            g.rect(0.0, sf - 8.0, sf, 8.0, rgba(190.0, 182.0, 168.0, 1.0));
+            g.rect(0.0, sf - 9.0, sf, 1.5, rgba(120.0, 112.0, 100.0, 0.6));
+            // marco de piedra, ventana y persiana a medio bajar
+            g.rect(36.0, 12.0, 56.0, 98.0, rgba(214.0, 204.0, 186.0, 1.0));
+            g.rect(42.0, 18.0, 44.0, 86.0, hex(0x1d2730));
+            g.rect(42.0, 18.0, 44.0, 34.0, hex(0x6a4a30));
+            for k in 0..9 {
+                g.rect(42.0, 19.0 + k as f32 * 3.8, 44.0, 1.2, hex(0x4a3220));
+            }
+            g.rect(63.0, 52.0, 2.0, 52.0, hex(0x9a9a92));
+            g.rect(44.0, 54.0, 18.0, 46.0, rgba(140.0, 170.0, 190.0, 0.25));
+            // dintel y alféizar
+            g.rect(32.0, 8.0, 64.0, 5.0, rgba(200.0, 190.0, 172.0, 1.0));
+            g.rect(34.0, 104.0, 60.0, 4.0, rgba(180.0, 170.0, 154.0, 1.0));
+            g
+        }
+        1 => {
+            let mut g = Canvas::new(s, hex(0xe4e4e0));
+            for _ in 0..600 {
+                let v = 205.0 + r.f() * 40.0;
+                g.rect(r.f() * sf, r.f() * sf, 2.0, 2.0, rgba(v, v, v, 0.35));
+            }
+            g.rect(0.0, 30.0, sf, 62.0, hex(0x24323c));
+            g.rect(0.0, 30.0, sf, 62.0, rgba(150.0, 190.0, 215.0, 0.18));
+            for x in [0.0f32, 42.0, 85.0] {
+                g.rect(x, 30.0, 3.0, 62.0, hex(0x8c9296));
+            }
+            g.rect(0.0, 58.0, sf, 2.0, hex(0x8c9296));
+            g.rect(0.0, 92.0, sf, 6.0, hex(0xc8c8c2));
+            // cortinas de algunos departamentos
+            if r.next() < 0.5 {
+                g.rect(46.0, 33.0, 36.0, 56.0, rgba(220.0, 200.0, 160.0, 0.5));
+            }
+            g
+        }
+        2 => {
+            let mut g = brick_canvas_sized(128, 14.0, 4.4);
+            g.rect(40.0, 26.0, 48.0, 80.0, hex(0xe8e2d4));
+            g.ellipse(64.0, 30.0, 24.0, 18.0, hex(0xe8e2d4));
+            g.rect(45.0, 30.0, 38.0, 74.0, hex(0x1c262e));
+            g.ellipse(64.0, 32.0, 19.0, 14.0, hex(0x1c262e));
+            g.rect(63.0, 20.0, 2.0, 84.0, hex(0xe8e2d4));
+            g.rect(45.0, 64.0, 38.0, 2.0, hex(0xe8e2d4));
+            g
+        }
+        _ => {
+            let mut g = brick_canvas_sized(128, 14.0, 4.4);
+            g.rect(18.0, 36.0, 92.0, 92.0, hex(0xe8e2d4));
+            g.ellipse(64.0, 40.0, 46.0, 30.0, hex(0xe8e2d4));
+            g.rect(24.0, 40.0, 80.0, 88.0, hex(0x2a221c));
+            g.ellipse(64.0, 42.0, 40.0, 26.0, hex(0x2a221c));
+            g
+        }
+    }
+}
+
+fn brick_canvas_sized(s: usize, bw: f32, bh: f32) -> Canvas {
+    let mut r = Rng::new(22);
+    let mut g = Canvas::new(s, hex(0xd9d2c4));
+    let rows = (s as f32 / bh) as i32 + 1;
+    for row in 0..rows {
+        let y = row as f32 * bh;
+        let off = if row % 2 == 0 { 0.0 } else { bw / 2.0 };
+        let mut x = -off;
+        while x < s as f32 {
+            let v = 0.82 + r.f() * 0.22;
+            g.rect(x + 1.0, y + 1.0, bw - 1.4, bh - 1.2, rgba(196.0 * v + r.f() * 16.0, 112.0 * v, 88.0 * v, 1.0));
+            x += bw;
+        }
+    }
+    g
+}
+
+/// Planta baja con local (nuevo): cartel arriba, vidriera con marco y puerta. 128 px = 3,4 m.
+pub fn shopfront() -> Image {
+    shop_canvas().into_image()
+}
+
+fn shop_canvas() -> Canvas {
+    let s = 128;
+    let sf = s as f32;
+    let mut g = Canvas::new(s, hex(0xd8d2c6));
+    // cartel (se tiñe con el color del material)
+    g.rect(0.0, 6.0, sf, 24.0, hex(0xffffff));
+    g.rect(10.0, 14.0, 60.0, 8.0, hex(0x202020));
+    g.rect(76.0, 14.0, 30.0, 8.0, rgba(40.0, 40.0, 40.0, 0.6));
+    // vidriera y puerta
+    g.rect(4.0, 34.0, 120.0, 94.0, hex(0x30363a));
+    g.rect(8.0, 38.0, 78.0, 86.0, hex(0x26343e));
+    g.rect(8.0, 38.0, 78.0, 86.0, rgba(170.0, 200.0, 220.0, 0.22));
+    // mercadería en la vidriera
+    for k in 0..5 {
+        let x = 12.0 + k as f32 * 15.0;
+        g.rect(x, 96.0, 10.0, 22.0, rgba(200.0 + k as f32 * 10.0, 160.0, 90.0 + k as f32 * 25.0, 0.7));
+    }
+    g.rect(90.0, 38.0, 30.0, 90.0, hex(0x3c2c20));
+    g.rect(92.0, 42.0, 26.0, 50.0, rgba(170.0, 200.0, 220.0, 0.25));
+    g.rect(114.0, 84.0, 3.0, 8.0, hex(0xc8b070));
+    g
+}
+
 /// Pasto (nuevo): verde con matas más claras y más oscuras y alguna flor. 128 px = 2 m.
 pub fn grass() -> Image {
     grass_canvas().into_image()
@@ -597,7 +717,10 @@ mod preview {
     #[test]
     fn guardar_texturas_nuevas() {
         let Some(dir) = std::env::var_os("ARENA_TEX") else { return };
-        let mut list = vec![("ladrillo", brick_canvas()), ("paneles", panel_canvas()), ("pasto", grass_canvas())];
+        let mut list = vec![("ladrillo", brick_canvas()), ("paneles", panel_canvas()), ("pasto", grass_canvas()), ("local", shop_canvas())];
+        for k in 0..4u8 {
+            list.push((["frente0", "frente1", "frente2", "frente3"][k as usize], front_canvas(k)));
+        }
         for k in 0..4 {
             list.push((["cartel0", "cartel1", "cartel2", "cartel3"][k as usize], billboard_canvas(k)));
         }

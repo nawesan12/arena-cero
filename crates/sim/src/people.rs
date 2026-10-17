@@ -1,7 +1,6 @@
 //! Vida en la ciudad (nuevo): peatones que caminan por las veredas de su manzana y huyen de los
 //! tiros, y tránsito civil que circula por las calles. Herir civiles cuesta créditos.
 
-use crate::city::{BC_ALL, CORE_A};
 use crate::game::{Game, GameEvent, Snd};
 use crate::maps::Level;
 use crate::vehicle::{CarAi, Vehicle};
@@ -13,7 +12,8 @@ pub struct Person {
     pub pos: Vec3,
     pub yaw: f32,
     /// Centro de la manzana que rodea.
-    home: Vec2,
+    /// Manzana por la que camina: [x0, z0, x1, z1].
+    home: [f32; 4],
     /// Esquina a la que va (0..4) y sentido de la vuelta.
     corner: usize,
     dir: i32,
@@ -29,9 +29,10 @@ pub struct Person {
 }
 
 /// Esquinas de la vereda de una manzana (a 14,8 m del centro).
-fn corner(home: Vec2, i: usize) -> Vec2 {
-    let r = 14.8;
-    home + [Vec2::new(-r, -r), Vec2::new(r, -r), Vec2::new(r, r), Vec2::new(-r, r)][i % 4]
+fn corner(home: [f32; 4], i: usize) -> Vec2 {
+    let e = 1.0;
+    let [x0, z0, x1, z1] = home;
+    [Vec2::new(x0 + e, z0 + e), Vec2::new(x1 - e, z0 + e), Vec2::new(x1 - e, z1 - e), Vec2::new(x0 + e, z1 - e)][i % 4]
 }
 
 impl Game {
@@ -42,8 +43,10 @@ impl Game {
         let mut tries = 0;
         while self.people.len() < n && tries < n * 10 {
             tries += 1;
-            let home = Vec2::new(BC_ALL[self.rng.idx(BC_ALL.len())], BC_ALL[self.rng.idx(BC_ALL.len())]);
-            if busy.contains(&(home.x as i32, home.y as i32)) {
+            let blk = c.blocks[self.rng.idx(c.blocks.len())];
+            let home = [blk.x0, blk.z0, blk.x1, blk.z1];
+            let mid = blk.center();
+            if busy.iter().any(|b| (b.0 - mid.x as i32).abs() < 4 && (b.1 - mid.y as i32).abs() < 4) {
                 continue;
             }
             let k = self.rng.idx(4);
@@ -71,18 +74,18 @@ impl Game {
 
     /// Tránsito civil: autos que dan vueltas por las calles del anillo exterior.
     pub(crate) fn spawn_traffic(&mut self, level: &mut Level, n: usize) {
-        let st: Vec<f32> = level.city.as_ref().map(|c| c.streets.clone()).unwrap_or_default();
-        if st.len() < 3 {
+        let (xs, zs): (Vec<f32>, Vec<f32>) = level.city.as_ref().map(|c| (c.xs.clone(), c.zs.clone())).unwrap_or_default();
+        if xs.len() < 3 || zs.len() < 3 {
             return;
         }
         for _ in 0..n {
-            let i = self.rng.idx(st.len() - 2);
-            let j = i + 1 + self.rng.idx(2).min(st.len() - 2 - i);
-            let k = self.rng.idx(st.len() - 2);
-            let l = k + 1 + self.rng.idx(2).min(st.len() - 2 - k);
+            let i = self.rng.idx(xs.len() - 2);
+            let j = i + 1 + self.rng.idx(2).min(xs.len() - 2 - i);
+            let k = self.rng.idx(zs.len() - 2);
+            let l = k + 1 + self.rng.idx(2).min(zs.len() - 2 - k);
             let lane = 4.2;
             // vuelta en sentido horario, por el carril de la derecha
-            let route = vec![Vec2::new(st[i] + lane, st[k] + lane), Vec2::new(st[j] - lane, st[k] + lane), Vec2::new(st[j] - lane, st[l] - lane), Vec2::new(st[i] + lane, st[l] - lane)];
+            let route = vec![Vec2::new(xs[i] + lane, zs[k] + lane), Vec2::new(xs[j] - lane, zs[k] + lane), Vec2::new(xs[j] - lane, zs[l] - lane), Vec2::new(xs[i] + lane, zs[l] - lane)];
             let s = route[0];
             let id = self.next_id();
             let mut v = Vehicle::new(id, Vec3::new(s.x, 0.0, s.y), std::f32::consts::FRAC_PI_2, self.rng.idx(6) as u8, &mut level.world);
@@ -96,7 +99,6 @@ impl Game {
 
     /// Caminar, doblar en las esquinas y huir del peligro.
     pub(crate) fn step_people(&mut self, level: &Level, player: Vec3, dt: f32) {
-        let _ = CORE_A;
         for p in &mut self.people {
             if !p.alive {
                 continue;

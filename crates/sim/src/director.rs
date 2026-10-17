@@ -89,21 +89,22 @@ impl Director {
 }
 
 impl Game {
-    fn street_points(level: &Level) -> Vec<f32> {
-        level.city.as_ref().map(|c| c.streets.clone()).unwrap_or_default()
+    /// Calles: las que van de norte a sur (x) y las que van de este a oeste (z).
+    fn street_points(level: &Level) -> (Vec<f32>, Vec<f32>) {
+        level.city.as_ref().map(|c| (c.xs.clone(), c.zs.clone())).unwrap_or_default()
     }
 
     /// Ruta rectangular por calles alrededor de un punto (para patrullas).
     fn street_loop(&mut self, level: &Level, near: Vec2) -> Vec<Vec2> {
-        let st = Self::street_points(level);
-        let pick = |v: f32, rng: &mut crate::rng::Rng| -> (f32, f32) {
+        let (xs, zs) = Self::street_points(level);
+        let pick = |st: &[f32], v: f32, rng: &mut crate::rng::Rng| -> (f32, f32) {
             let i = st.iter().enumerate().min_by(|a, b| (a.1 - v).abs().total_cmp(&(b.1 - v).abs())).map_or(0, |x| x.0);
             let j = (i + 1 + rng.idx(2)).min(st.len() - 1);
             let i0 = i.saturating_sub(1 + rng.idx(2));
             (st[i0], st[j])
         };
-        let (x0, x1) = pick(near.x, &mut self.rng);
-        let (z0, z1) = pick(near.y, &mut self.rng);
+        let (x0, x1) = pick(&xs, near.x, &mut self.rng);
+        let (z0, z1) = pick(&zs, near.y, &mut self.rng);
         vec![Vec2::new(x0, z0), Vec2::new(x1, z0), Vec2::new(x1, z1), Vec2::new(x0, z1)]
     }
 
@@ -326,13 +327,14 @@ impl Game {
         };
         let id = self.next_id();
         let a = level.info.a - 24.0;
-        let st = Self::street_points(level);
+        let (xs, zs) = Self::street_points(level);
         let mut m = Mission { id, kind, pos: player, t_left: 240.0, enemies: Vec::new(), cars: Vec::new(), reward: 500, hold: 0.0 };
         match kind {
             MissionKind::Convoy => {
                 // por una calle que cruza toda la ciudad, cerca del jugador
                 let along_x = self.rng.next() < 0.5;
                 let near = if along_x { player.z } else { player.x };
+                let st = if along_x { &zs } else { &xs };
                 let s = st.iter().copied().min_by(|x, y| (x - near).abs().total_cmp(&(y - near).abs())).unwrap_or(0.0) + 4.2;
                 let dir = if self.rng.next() < 0.5 { 1.0 } else { -1.0 };
                 let p = |t: f32| if along_x { Vec2::new(t, s) } else { Vec2::new(s, t) };
@@ -352,9 +354,9 @@ impl Game {
             }
             MissionKind::Hostage => {
                 // en una esquina a 90-200 m
-                let mut best = Vec2::new(st[0], st[0]);
+                let mut best = Vec2::new(xs[0], zs[0]);
                 for _ in 0..40 {
-                    let c = Vec2::new(st[self.rng.idx(st.len())], st[self.rng.idx(st.len())]);
+                    let c = Vec2::new(xs[self.rng.idx(xs.len())], zs[self.rng.idx(zs.len())]);
                     let d = c.distance(Vec2::new(player.x, player.z));
                     if (90.0..200.0).contains(&d) {
                         best = c;

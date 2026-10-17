@@ -1046,7 +1046,7 @@ impl Game {
             }
             match e.kind {
                 Kind::Soldier(_) => {
-                    let mine = e.op.map_or(0, |o| shooters[o]) - u32::from(e.burst > 0);
+                    let mine = e.op.map_or(0, |o| shooters[o]).saturating_sub(u32::from(e.burst > 0));
                     update_soldier(e, &ctx, ops, &mut self.corpses, mine, &mut self.rng, &mut ev);
                 }
                 Kind::Turret => update_turret(e, &ctx, powered, &mut self.rng, &mut ev),
@@ -1209,7 +1209,7 @@ mod tests {
         // más 6 campamentos de 4 soldados (3 con francotirador)
         assert_eq!(soldiers, 5 + 4 + 5 + 4 + 6 + 6 + 5 + 6 * 4 + 3);
         assert_eq!(turrets, 1 + 2 + 1 + 1 + 2 + 1 + 2 + 6);
-        assert_eq!(g.enemies.iter().filter(|e| e.surv.is_some()).count(), 9);
+        assert_eq!(g.enemies.iter().filter(|e| e.surv.is_some()).count(), l.city.as_ref().unwrap().drone_routes.len());
     }
 
     #[test]
@@ -1217,7 +1217,8 @@ mod tests {
         let mut l = build_level(MapId::Ciudad);
         let mut g = Game::new(&mut l, 1);
         // en la puerta sur del mando, a la vista
-        let t = target(0.0, 14.0);
+        let m = l.city.as_ref().unwrap().outposts.iter().find(|o| o.id == crate::city::OutpostId::Mando).map(|o| (o.cx, o.cz)).unwrap();
+        let t = target(m.0, m.1 + 14.0);
         let mut hurt = 0.0;
         for _ in 0..(60 * 20) {
             g.step(&mut l, &t, true, crate::TICK);

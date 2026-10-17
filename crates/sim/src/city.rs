@@ -7,6 +7,8 @@ use crate::mat::{self, Mat};
 pub mod city2;
 #[path = "city_edge.rs"]
 pub mod city_edge;
+#[path = "town.rs"]
+pub mod town;
 use crate::rng::Rng;
 use crate::world::{ColliderId, CylAxis, Cylinder, STEP, VisualBox, VisualGroup, World};
 use glam::Vec3;
@@ -143,8 +145,11 @@ pub struct CityData {
     pub vehicles: Vec<(Vec3, f32, u8)>,
     /// Lugares posibles para cajas de botín (dentro de edificios y galpones).
     pub loot_spots: Vec<Vec3>,
-    /// Calles (coordenada de cada calle, en X y en Z) para rutas de patrullas y convoyes.
-    pub streets: Vec<f32>,
+    /// Calles (coordenada del eje): las que van de norte a sur (x) y de este a oeste (z).
+    pub xs: Vec<f32>,
+    pub zs: Vec<f32>,
+    /// Manzanas (para peatones y el mapa).
+    pub blocks: Vec<town::Block>,
     /// Estaciones de subte.
     pub stations: Vec<city2::Station>,
 }
@@ -204,16 +209,6 @@ fn window_row(len: f32) -> Vec<Opening> {
 }
 
 impl B<'_> {
-    fn mat_facade(&mut self) -> Mat {
-        Mat::Facade(self.r.idx(mat::FACADES as usize) as u8)
-    }
-    fn mat_tower(&mut self) -> Mat {
-        Mat::Tower(self.r.idx(mat::TOWERS as usize) as u8)
-    }
-    fn mat_car(&mut self) -> Mat {
-        Mat::Car(self.r.idx(mat::CARS as usize) as u8)
-    }
-
     /// Pared con aberturas: alféizar (0-1 m), ventanas (1-2,4 m) y dintel hasta el techo.
     #[allow(clippy::too_many_arguments)]
     fn wall_side(&mut self, along_x: bool, fixed: f32, c0: f32, len: f32, y0: f32, wall_h: f32, openings: &[Opening], mat: Mat) {
@@ -387,16 +382,6 @@ impl B<'_> {
         self.spots.push(Vec3::new(cx - w * 0.3, base, cz - d * 0.3));
     }
 
-    fn car(&mut self, x: f32, z: f32, along_x: bool, mat: Mat, y: f32) {
-        let (l, wd) = (4.3, 1.9);
-        let (w, d) = if along_x { (l, wd) } else { (wd, l) };
-        let (gw, gd) = if along_x { (2.2, 1.7) } else { (1.7, 2.2) };
-        self.w.add_block(x, y + 0.1, z, w, 0.9, d, mat);
-        self.w.add_visual(x, y + 1.35, z, gw, 0.6, gd, Mat::CarGlass, true);
-        self.w.add_collider(x, z, gw, 0.65, gd, y + 1.0);
-        self.w.add_visual(x, y + 0.3, z, w + 0.06, 0.25, d + 0.06, Mat::Tire, false);
-    }
-
     /// Escalera de incendio exterior: tramos alternados en dos carriles y descansos por piso.
     fn fire_escape(&mut self, wall_x: f32, cz: f32, floors: u32, base: f32) {
         let (in_l, out_l, za, zb) = (wall_x + 0.55, wall_x + 1.45, cz - 1.8, cz + 1.8);
@@ -421,67 +406,6 @@ impl B<'_> {
         }
     }
 
-    /// Pasarela entre azoteas.
-    fn skybridge(&mut self, x0: f32, z0: f32, x1: f32, z1: f32, y: f32) {
-        let along_x = (x1 - x0).abs() > (z1 - z0).abs();
-        let l = if along_x { (x1 - x0).abs() } else { (z1 - z0).abs() };
-        let (cx, cz) = ((x0 + x1) / 2.0, (z0 + z1) / 2.0);
-        let mut t = -l / 2.0;
-        if along_x {
-            self.w.add_block(cx, y - 0.3, cz, l, 0.3, 3.2, Mat::Steel);
-            for s in [-1.0, 1.0] {
-                self.w.add_block(cx, y, cz + s * 1.55, l, 1.05, 0.1, Mat::Pole);
-            }
-            while t <= l / 2.0 {
-                self.w.add_strip(cx + t, y - 0.9, cz, 0.2, 1.2, 3.2, Mat::Pole);
-                t += 3.0;
-            }
-        } else {
-            self.w.add_block(cx, y - 0.3, cz, 3.2, 0.3, l, Mat::Steel);
-            for s in [-1.0, 1.0] {
-                self.w.add_block(cx + s * 1.55, y, cz, 0.1, 1.05, l, Mat::Pole);
-            }
-            while t <= l / 2.0 {
-                self.w.add_strip(cx, y - 0.9, cz + t, 3.2, 1.2, 0.2, Mat::Pole);
-                t += 3.0;
-            }
-        }
-    }
-
-    /// Autopista elevada con rampas de bajada en ambos extremos.
-    fn highway(&mut self, z: f32, x0: f32, x1: f32, deck_y: f32) {
-        let (len, cx) = (x1 - x0, (x0 + x1) / 2.0);
-        self.w.add_block(cx, deck_y - 0.6, z, len, 0.6, 11.0, Mat::Concrete);
-        for s in [-1.0, 1.0] {
-            self.w.add_block(cx, deck_y, z + s * 5.2, len, 0.95, 0.6, Mat::Jersey);
-        }
-        let mut x = x0 + 6.0;
-        while x < x1 - 4.0 {
-            self.w.add_block(x, 0.0, z - 3.0, 1.4, deck_y - 0.6, 1.4, Mat::Concrete);
-            self.w.add_block(x, 0.0, z + 3.0, 1.4, deck_y - 0.6, 1.4, Mat::Concrete);
-            self.w.add_visual(x, deck_y - 0.9, z, 1.6, 0.6, 9.0, Mat::Concrete, true);
-            x += 14.0;
-        }
-        let mut x = x0 + 3.0;
-        while x < x1 {
-            self.w.add_strip(x, deck_y + 0.01, z, 3.5, 0.02, 0.18, Mat::Line);
-            x += 8.0;
-        }
-        let n = (deck_y / STEP).round() as i32;
-        for (edge, dir) in [(x0, -1.0), (x1, 1.0)] {
-            for k in 1..n {
-                let k = k as f32;
-                self.w.add_block(edge + dir * (k - 0.5) * 0.9, 0.0, z, 0.9, deck_y - k * STEP, 10.0, Mat::Concrete);
-            }
-        }
-        let mut x = x0 + 10.0;
-        while x < x1 {
-            self.w.add_block(x, deck_y, z - 5.6, 0.18, 6.0, 0.18, Mat::Pole);
-            self.w.add_visual(x, deck_y + 6.05, z - 5.1, 0.35, 0.14, 0.9, Mat::Lamp, false);
-            x += 30.0;
-        }
-    }
-
     fn tree(&mut self, x: f32, z: f32, s: f32) {
         self.w.add_block(x, 0.0, z, 0.35 * s, 2.4 * s, 0.35 * s, Mat::Trunk);
         self.w.trees.push([x, 2.4 * s + 1.2 * s, z, 1.7 * s]);
@@ -494,10 +418,6 @@ impl B<'_> {
 
     fn sandbags(&mut self, x: f32, z: f32, len: f32, along_x: bool) {
         if along_x { self.w.add_box(x, z, len, 1.1, 0.9, Mat::Sandbag) } else { self.w.add_box(x, z, 0.9, 1.1, len, Mat::Sandbag) };
-    }
-
-    fn jersey(&mut self, x: f32, z: f32, len: f32, along_x: bool) {
-        if along_x { self.w.add_box(x, z, len, 0.95, 0.6, Mat::Jersey) } else { self.w.add_box(x, z, 0.6, 0.95, len, Mat::Jersey) };
     }
 
     /// Estructura de obra: columnas, losas parciales y escaleras sin paredes.
@@ -583,7 +503,7 @@ impl B<'_> {
         op.cover_around(x, z, w, d);
     }
 
-    fn outposts(&mut self) -> Vec<Outpost> {
+    fn outposts(&mut self, pos: &[(f32, f32); 7]) -> Vec<Outpost> {
         use std::f32::consts::PI;
         use OutpostId::*;
         use Role::*;
@@ -591,7 +511,7 @@ impl B<'_> {
 
         // Antena de comunicaciones
         {
-            let (cx, cz) = (-132.0, -44.0);
+            let (cx, cz) = pos[0];
             let mut op = Outpost::new(Antena, "Antena", "Antena de comunicaciones", "Sin antena no llegan drones de refuerzo", "Plantar carga en la antena", 'A', cx, cz);
             self.outpost_walls(cx, cz, &['e', 's']);
             let mut g = VisualGroup { origin: Vec3::new(cx, 0.0, cz), boxes: Vec::new() };
@@ -635,7 +555,7 @@ impl B<'_> {
         }
         // Subestación
         {
-            let (cx, cz) = (132.0, 44.0);
+            let (cx, cz) = pos[1];
             let mut op = Outpost::new(Sub, "Subestación", "Subestación eléctrica", "Sin energía, todas las torretas se apagan", "Sabotear el generador", 'S', cx, cz);
             self.outpost_walls(cx, cz, &['w', 'n']);
             for (tx, tz) in [(-8.0, -7.0), (-2.0, -7.0), (4.0, -7.0), (-8.0, 6.0), (-2.0, 6.0)] {
@@ -658,7 +578,7 @@ impl B<'_> {
         }
         // Oficinas
         {
-            let (cx, cz) = (88.0, -132.0);
+            let (cx, cz) = pos[2];
             let mut op = Outpost::new(Datos, "Oficinas", "Torre de oficinas", "Los datos marcan a todos los enemigos", "Descargar los datos (último piso)", 'D', cx, cz);
             self.outpost_walls(cx, cz, &['s', 'w']);
             self.building(cx + 2.0, cz - 3.0, 16.0, 13.0, 3, Mat::Facade(5), BOpts { doors: &['s', 'w'], roof_props: false, fire_escape: true, ..Default::default() });
@@ -677,7 +597,7 @@ impl B<'_> {
         }
         // Arsenal
         {
-            let (cx, cz) = (0.0, 132.0);
+            let (cx, cz) = pos[3];
             let mut op = Outpost::new(Arsenal, "Arsenal", "Arsenal", "Desbloquea el lanzagranadas", "Forzar el arsenal", 'R', cx, cz);
             self.outpost_walls(cx, cz, &['n', 'w']);
             self.hall(cx + 2.0, cz + 4.0, 16.0, 11.0, 5.0, Mat::Facade(3), &['n', 'w']);
@@ -698,7 +618,7 @@ impl B<'_> {
         }
         // Puesto de mando
         {
-            let (cx, cz) = (0.0, 0.0);
+            let (cx, cz) = pos[4];
             let mut op = Outpost::new(Mando, "Mando", "Puesto de mando", "Eliminar al comandante descabeza al ejército", "Eliminar al comandante", 'M', cx, cz);
             self.outpost_walls(cx, cz, &['n', 's', 'e', 'w']);
             self.hall(cx, cz - 6.0, 12.0, 8.0, 3.6, Mat::Jersey, &['s']);
@@ -717,7 +637,7 @@ impl B<'_> {
         }
         // Obra en construcción: la cabina de la grúa está a 40 m
         {
-            let (cx, cz) = (-44.0, -132.0);
+            let (cx, cz) = pos[5];
             let mut op = Outpost::new(Obra, "Obra", "Obra en construcción", "+1 intento y francotiradores y torretas marcados", "Hackear la grúa (cabina, a 40 m)", 'O', cx, cz);
             self.outpost_walls(cx, cz, &['s', 'e']);
             self.frame(cx - 4.0, cz - 3.0, 20.0, 16.0, 5);
@@ -761,7 +681,7 @@ impl B<'_> {
         }
         // Patio de trenes y depósito de combustible
         {
-            let (cx, cz) = (132.0, 132.0);
+            let (cx, cz) = pos[6];
             let mut op = Outpost::new(Trenes, "Trenes", "Depósito de combustible", "Sin combustible, los drones no vuelan", "Plantar carga en el depósito", 'T', cx, cz);
             self.outpost_walls(cx, cz, &['n', 'w']);
             for tz in [-9.0, -3.0] {
@@ -802,350 +722,22 @@ impl B<'_> {
         ops
     }
 
-    /* --- manzanas civiles --- */
-
-    fn block_apts(&mut self, bx: f32, bz: f32, fire_escape: bool, balconies: bool) {
-        let floors = 2 + self.r.idx(2) as u32;
-        let m = self.mat_facade();
-        self.building(bx - 6.0, bz - 5.0, 14.0, 12.0, floors, m, BOpts { doors: &['s', 'e'], fire_escape, balconies, ..Default::default() });
-        let floors = 2 + self.r.idx(2) as u32;
-        let m = self.mat_facade();
-        self.building(bx + 8.0, bz + 7.0, 12.0, 11.0, floors, m, BOpts { doors: &['w', 'n'], balconies, ..Default::default() });
-        self.tree(bx - 11.0, bz + 11.0, 1.0);
-        self.tree(bx + 12.0, bz - 11.0, 1.0);
-        self.w.add_box(bx + 6.0, bz - 8.0, 3.0, 1.1, 1.0, Mat::Hedge);
-    }
-
-    fn block_courtyard(&mut self, bx: f32, bz: f32) {
-        let m = self.mat_facade();
-        self.building(bx, bz - 11.0, 30.0, 9.0, 3, m, BOpts { doors: &['s', 'n'], balconies: true, ..Default::default() });
-        self.building(bx, bz + 11.0, 30.0, 9.0, 3, m, BOpts { doors: &['n', 's'], ..Default::default() });
-        self.building(bx - 11.0, bz, 8.0, 13.0, 2, m, BOpts { doors: &['e'], props: false, ..Default::default() });
-        self.building(bx + 11.0, bz, 8.0, 13.0, 2, m, BOpts { doors: &['w'], props: false, ..Default::default() });
-        self.tree(bx, bz, 1.2);
-        self.w.add_box(bx - 3.0, bz + 3.0, 2.0, 0.5, 0.6, Mat::Wood);
-        self.w.add_box(bx + 3.0, bz - 3.0, 2.0, 0.5, 0.6, Mat::Wood);
-    }
-
-    fn block_terrace_park(&mut self, bx: f32, bz: f32) {
-        for k in 1..=6 {
-            let s = 30.0 - k as f32 * 4.0;
-            self.w.add_box(bx, bz, s, k as f32 * STEP, s, if k % 2 == 1 { Mat::Grass } else { Mat::Sidewalk });
-        }
-        for (dx, dz) in [(-1.5, -1.5), (1.5, -1.5), (-1.5, 1.5), (1.5, 1.5)] {
-            self.w.add_block(bx + dx, 6.0 * STEP, bz + dz, 0.2, 2.6, 0.2, Mat::Pole);
-        }
-        self.w.add_block(bx, 6.0 * STEP + 2.6, bz, 4.0, 0.2, 4.0, Mat::Roof);
-        for (dx, dz) in [(-14.0, -14.0), (14.0, -14.0), (-14.0, 14.0), (14.0, 14.0), (0.0, -14.5), (-14.5, 0.0)] {
-            self.tree(bx + dx, bz + dz, 1.1);
-        }
-    }
-
-    fn block_market(&mut self, bx: f32, bz: f32) {
-        for i in -1..=1 {
-            for j in -1..=1 {
-                if i != 0 || j != 0 {
-                    let m = Mat::Awning(self.r.idx(mat::AWNINGS as usize) as u8);
-                    self.stall(bx + i as f32 * 8.0, bz + j as f32 * 7.0, m);
-                }
-            }
-        }
-        self.w.add_box(bx, bz, 4.0, 3.2, 4.0, Mat::Wood);
-        self.w.add_visual(bx, 3.4, bz, 5.0, 0.2, 5.0, Mat::Awning(0), true);
-        self.tree(bx - 13.0, bz - 13.0, 1.0);
-        self.tree(bx + 13.0, bz + 13.0, 1.0);
-    }
-
-    fn block_plaza(&mut self, bx: f32, bz: f32) {
-        self.w.add_box(bx, bz, 9.0, 0.7, 9.0, Mat::Jersey);
-        self.w.add_visual(bx, 0.72, bz, 8.0, 0.04, 8.0, Mat::Water, false);
-        self.w.add_box(bx, bz, 1.2, 2.4, 1.2, Mat::Jersey);
-        self.w.add_block(bx, 2.4, bz, 0.8, 1.8, 0.8, Mat::Statue);
-        for (dx, dz) in [(-10.0f32, 0.0), (10.0, 0.0), (0.0, -10.0), (0.0, 10.0)] {
-            let (w, d) = if dx != 0.0 { (0.6, 3.0) } else { (3.0, 0.6) };
-            self.w.add_box(bx + dx, bz + dz, w, 0.5, d, Mat::Wood);
-        }
-        for (dx, dz) in [(-12.0, -12.0), (12.0, -12.0), (-12.0, 12.0), (12.0, 12.0)] {
-            self.tree(bx + dx, bz + dz, 1.2);
-        }
-    }
-
-    fn block_park(&mut self, bx: f32, bz: f32) {
-        // césped (nuevo; antes el parque era vereda gris)
-        self.w.add_visual(bx, 0.17, bz, BLOCK - 3.0, 0.02, BLOCK - 3.0, Mat::Grass, false);
-        for _ in 0..8 {
-            let x = bx + self.r.signed() * 12.0;
-            let z = bz + self.r.signed() * 12.0;
-            let s = 0.9 + self.r.f() * 0.5;
-            self.tree(x, z, s);
-        }
-        self.w.add_box(bx, bz, 6.0, 0.6, 6.0, Mat::Jersey);
-        self.w.add_visual(bx, 0.62, bz, 5.0, 0.04, 5.0, Mat::Water, false);
-        for [x, z, w, d] in [[-8.0, 0.0, 1.0, 6.0], [8.0, 0.0, 1.0, 6.0], [0.0, -9.0, 6.0, 1.0], [0.0, 9.0, 6.0, 1.0]] {
-            self.w.add_box(bx + x, bz + z, w, 0.8, d, Mat::Hedge);
-        }
-    }
-
-    fn block_hall(&mut self, bx: f32, bz: f32) {
-        let m = self.mat_facade();
-        self.hall(bx, bz - 2.0, 22.0, 16.0, 6.0, m, &['s', 'e']);
-        for i in 0..4 {
-            let z = bz - 2.0 + (self.r.f() - 0.5) * 6.0;
-            let h = 1.2 + self.r.f();
-            self.w.add_box(bx - 6.0 + i as f32 * 4.0, z, 2.0, h, 2.0, Mat::Crate);
-        }
-        let ci = self.r.idx(4);
-        self.w.add_container(bx + 10.0, bz + 12.0, true, 1, ci);
-    }
-
-    fn block_containers(&mut self, bx: f32, bz: f32) {
-        for _ in 0..7 {
-            let ax = self.r.next() < 0.5;
-            let x = bx + self.r.signed() * 10.0;
-            let z = bz + self.r.signed() * 10.0;
-            let stack = 1 + u32::from(self.r.next() < 0.35);
-            let ci = self.r.idx(4);
-            self.w.add_container(x, z, ax, stack, ci);
-        }
-    }
-
-    fn block_industrial(&mut self, bx: f32, bz: f32) {
-        self.hall(bx - 4.0, bz - 5.0, 18.0, 14.0, 7.0, Mat::Facade(3), &['s']);
-        self.fuel_tank(bx + 10.0, bz + 8.0, 2.6, 9.0);
-        self.fuel_tank(bx + 10.0, bz - 4.0, 2.6, 9.0);
-        let mut y = 2.0;
-        while y < 9.0 {
-            self.w.add_strip(bx + 10.0, y, bz + 2.0, 0.5, 0.5, 10.0, Mat::Pole);
-            y += 3.0;
-        }
-        let ci = self.r.idx(4);
-        self.w.add_container(bx - 6.0, bz + 11.0, true, 2, ci);
-    }
-
-    fn block_lot(&mut self, bx: f32, bz: f32) {
-        for i in 0..6 {
-            let m = self.mat_car();
-            self.car(bx - 9.0 + (i % 3) as f32 * 9.0, bz - 9.0 + (i / 3) as f32 * 9.0, false, m, 0.0);
-        }
-        let m = self.mat_facade();
-        self.building(bx + 9.0, bz + 9.0, 10.0, 9.0, 1, m, BOpts { doors: &['w'], ..Default::default() });
-    }
-
-    fn block_tower(&mut self, bx: f32, bz: f32, h: f32, gaps: &[char]) {
-        let m = self.mat_tower();
-        self.tower(bx, bz, 18.0, 18.0, h, m, gaps);
-        self.tree(bx - 13.0, bz + 13.0, 1.0);
-        self.tree(bx + 13.0, bz - 13.0, 1.0);
-        self.jersey(bx, bz + 14.0, 4.0, true);
-    }
-
-    fn block_skyscraper(&mut self, bx: f32, bz: f32) {
-        self.tower(bx, bz, 20.0, 20.0, 58.0, Mat::Tower(3), &[]);
-        self.building(bx, bz + 13.0, 26.0, 6.0, 1, Mat::Facade(5), BOpts { doors: &['s'], props: false, roof_props: false, ..Default::default() });
-        for [x, z, w, d] in [[0.0, -4.0, 6.0, 0.4], [0.0, 4.0, 6.0, 0.4], [-3.0, 0.0, 0.4, 8.4], [3.0, 0.0, 0.4, 8.4]] {
-            self.w.add_strip(bx + x, 59.2, bz + z, w, 0.04, d, Mat::StripW);
-        }
-        self.w.add_block(bx + 7.0, 59.1, bz - 7.0, 0.5, 9.0, 0.5, Mat::Steel);
-        self.w.add_strip(bx + 7.0, 68.2, bz - 7.0, 0.5, 0.5, 0.5, Mat::Red);
-    }
-}
-
-/// Arma el Distrito Sur en `w` (que tiene que haberse creado con a = 164).
-pub fn build(w: &mut World) -> CityData {
-    let full_a = w.a;
-    let a = CORE_A;
-    let mut b = B { w, r: Rng::new(SEED), spots: Vec::new() };
-    // El muro y el horizonte de la web quedaban a ±164 m; ahora ahí siguen los barrios nuevos.
-    // Se consumen los mismos números aleatorios para que el resto del distrito salga idéntico.
-    for _ in 0..40 {
-        for _ in 0..4 {
-            b.r.next();
-        }
-    }
-    // veredas y líneas de calle
-    for bx in BC {
-        for bz in BC {
-            b.w.add_box(bx, bz, BLOCK, 0.16, BLOCK, Mat::Sidewalk);
-        }
-    }
-    let streets = [-110.0f32, -66.0, -22.0, 22.0, 66.0, 110.0];
-    let avenue = 156.0f32;
-    for s in streets.iter().copied().chain([-avenue, avenue, -198.0, 198.0, -242.0, 242.0]) {
-        let m = if (s.abs() - 156.0).abs() < 1.0 { Mat::LineY } else { Mat::Line };
-        let mut t = -full_a + 4.0;
-        while t < full_a - 4.0 {
-            b.w.add_strip(s, 0.015, t, 0.18, 0.02, 3.0, m);
-            b.w.add_strip(t, 0.015, s, 3.0, 0.02, 0.18, m);
-            t += 7.0;
-        }
-    }
-    // autos abandonados en las calles
-    let mut vehicles = Vec::new();
-    for _ in 0..70 {
-        let s = streets[b.r.idx(streets.len())];
-        let t = b.r.signed() * (a - 14.0);
-        let ax = b.r.next() < 0.5;
-        let lane = if b.r.next() < 0.5 { -4.2 } else { 4.2 };
-        let (x, z) = if ax { (t, s + lane) } else { (s + lane, t) };
-        if (z + 22.0).abs() < 7.0 && ax {
-            continue;
-        }
-        // en la web eran decorado; acá se pueden manejar (los de la autopista siguen fijos)
-        let Mat::Car(c) = b.mat_car() else { unreachable!() };
-        vehicles.push((Vec3::new(x, 0.0, z), if ax { std::f32::consts::FRAC_PI_2 } else { 0.0 }, c));
-    }
-    // autopista elevada sobre la calle z = -22, con autos arriba
-    b.highway(-22.0, -118.0, 118.0, 7.14);
-    for i in 0..9 {
-        let x = -100.0 + i as f32 * 24.0 + b.r.f() * 6.0;
-        let z = -22.0 + if b.r.next() < 0.5 { -2.6 } else { 2.6 };
-        let m = b.mat_car();
-        b.car(x, z, true, m, 7.14);
-    }
-    let outposts = b.outposts();
-    let mut used: Vec<(i32, i32)> = outposts.iter().map(|o| (o.cx as i32, o.cz as i32)).collect();
-    for bx in BC {
-        for bz in BC {
-            if !used.contains(&(bx as i32, bz as i32)) {
-                for (lx, lz) in [(-15.0, -15.0), (15.0, 15.0), (15.0, -15.0), (-15.0, 15.0)] {
-                    b.lamp(bx + lx, bz + lz);
-                }
-            }
-        }
-    }
-    // refugio
-    let safe_pos;
-    {
-        let (cx, cz) = (-132.0, 132.0);
-        used.push((cx as i32, cz as i32));
-        b.building(cx, cz, 14.0, 11.0, 2, Mat::Facade(0), BOpts { doors: &['n', 'e'], ..Default::default() });
-        safe_pos = Vec3::new(cx - 3.0, 1.0, cz + 2.0);
-        b.w.add_block(cx - 3.0, 0.16, cz + 2.6, 1.6, 0.9, 0.9, Mat::Container(1));
-        b.w.add_strip(cx - 3.0, 1.1, cz + 2.6, 1.2, 0.06, 0.7, Mat::Mint);
-        for (x, z) in [(-12.0, -12.0), (12.0, 12.0), (-12.0, 12.0)] {
-            b.tree(cx + x, cz + z, 1.1);
-        }
-    }
-    // distrito por zonas: residencial al oeste, centro de torres con pasarelas, industrial al este
-    #[rustfmt::skip]
-    let plan: &[((i32, i32), &str)] = &[
-        ((-132, -132), "aptsFE"), ((-88, -132), "park"), ((0, -132), "hall"), ((44, -132), "apts"), ((132, -132), "containers"),
-        ((-132, -88), "court"), ((-88, -88), "sky"), ((-44, -88), "aptsB"), ((0, -88), "tower40"), ((44, -88), "market"), ((88, -88), "aptsFE"), ((132, -88), "industrial"),
-        ((-88, -44), "apts"), ((-44, -44), "tower30"), ((0, -44), "twinA1"), ((44, -44), "twinA2"), ((88, -44), "court"), ((132, -44), "hall"),
-        ((-132, 0), "aptsFE"), ((-88, 0), "terraces"), ((-44, 0), "twinB2"), ((44, 0), "plaza"), ((88, 0), "market"), ((132, 0), "aptsB"),
-        ((-132, 44), "hall"), ((-88, 44), "aptsB"), ((-44, 44), "twinB1"), ((0, 44), "tower24"), ((44, 44), "court"), ((88, 44), "lot"),
-        ((-132, 88), "aptsFE"), ((-88, 88), "park"), ((-44, 88), "court"), ((0, 88), "apts"), ((44, 88), "tower2"), ((88, 88), "hall"), ((132, 88), "containers"),
-        ((-88, 132), "lot"), ((-44, 132), "apts"), ((44, 132), "hall"), ((88, 132), "industrial"),
-    ];
-    for bx in BC {
-        for bz in BC {
-            let key = (bx as i32, bz as i32);
-            if used.contains(&key) {
-                continue;
-            }
-            let kind = plan.iter().find(|(k, _)| *k == key).map_or("apts", |(_, v)| *v);
-            match kind {
-                "apts" => b.block_apts(bx, bz, false, false),
-                "aptsB" => b.block_apts(bx, bz, false, true),
-                "aptsFE" => b.block_apts(bx, bz, true, true),
-                "court" => b.block_courtyard(bx, bz),
-                "park" => b.block_park(bx, bz),
-                "terraces" => b.block_terrace_park(bx, bz),
-                "market" => b.block_market(bx, bz),
-                "plaza" => b.block_plaza(bx, bz),
-                "hall" => b.block_hall(bx, bz),
-                "containers" => b.block_containers(bx, bz),
-                "industrial" => b.block_industrial(bx, bz),
-                "lot" => b.block_lot(bx, bz),
-                "sky" => b.block_skyscraper(bx, bz),
-                "tower40" => b.block_tower(bx, bz, 40.0, &[]),
-                "tower30" => b.block_tower(bx, bz, 30.0, &[]),
-                "tower24" => {
-                    b.block_tower(bx, bz, 24.0, &[]);
-                    b.tower(bx + 12.5, bz + 12.5, 5.0, 5.0, 12.0, Mat::Tower(1), &[]);
-                }
-                "tower2" => {
-                    let m = b.mat_tower();
-                    b.tower(bx - 4.0, bz - 4.0, 14.0, 14.0, 26.0, m, &[]);
-                    let m = b.mat_tower();
-                    b.tower(bx + 9.0, bz + 9.0, 8.0, 8.0, 14.0, m, &[]);
-                }
-                "twinA1" => b.block_tower(bx, bz, 34.0, &['e']),
-                "twinA2" => b.block_tower(bx, bz, 34.0, &['w']),
-                "twinB1" => b.block_tower(bx, bz, 26.0, &['n']),
-                "twinB2" => b.block_tower(bx, bz, 26.0, &['s']),
-                _ => unreachable!("manzana desconocida: {kind}"),
-            }
-        }
-    }
-    // pasarelas entre torres gemelas, por encima de las calles
-    b.skybridge(9.0, -44.0, 35.0, -44.0, 34.0);
-    b.skybridge(-44.0, 9.0, -44.0, 35.0, 26.0);
-
-    // barrios nuevos alrededor del distrito original
-    let mut outposts = outposts;
-    let mut stations = Vec::new();
-    outer(&mut b, &mut vehicles, &mut outposts, &mut stations);
-
-    let drone_routes = vec![
-        vec![[-286.0, -286.0], [286.0, -286.0], [286.0, -198.0], [-286.0, -198.0]],
-        vec![[198.0, -286.0], [286.0, -286.0], [286.0, 286.0], [198.0, 286.0]],
-        vec![[-286.0, 198.0], [286.0, 198.0], [286.0, 286.0], [-286.0, 286.0]],
-        vec![[-286.0, -286.0], [-198.0, -286.0], [-198.0, 286.0], [-286.0, 286.0]],
-        vec![[-156.0, -156.0], [156.0, -156.0], [156.0, -66.0], [-156.0, -66.0]],
-        vec![[-110.0, -156.0], [-110.0, 156.0], [-22.0, 156.0], [-22.0, -110.0]],
-        vec![[156.0, 156.0], [22.0, 156.0], [22.0, 22.0], [156.0, 22.0]],
-        vec![[66.0, -110.0], [66.0, 110.0], [110.0, 110.0], [110.0, -110.0]],
-        vec![[-66.0, 66.0], [-156.0, 66.0], [-156.0, 110.0], [-66.0, 110.0]],
-    ];
-    let loot_spots = std::mem::take(&mut b.spots);
-    let streets = vec![-242.0, -198.0, -156.0, -110.0, -66.0, -22.0, 22.0, 66.0, 110.0, 156.0, 198.0, 242.0];
-    city2::decor(b.w, &streets);
-    CityData { outposts, safe_pos, drone_routes, vehicles, loot_spots, streets, stations }
-}
-
-/// Barrios exteriores: un anillo de manzanas alrededor del Distrito Sur con cuatro temas,
-/// campamentos enemigos, una segunda autopista, más autos y el muro y horizonte nuevos.
-fn outer(b: &mut B, vehicles: &mut Vec<(Vec3, f32, u8)>, outposts: &mut Vec<Outpost>, stations: &mut Vec<city2::Station>) {
-    use std::f32::consts::{FRAC_PI_2, PI};
-    let a = b.w.a;
-    b.r = Rng::new(SEED_OUTER);
-    let is_outer = |x: f32, z: f32| x.abs() > CORE_A || z.abs() > CORE_A;
-    // Antes acá iban el muro de 12 m y un anillo de torres de fondo; ahora los bordes son
-    // naturales (`city_edge`). Se siguen sacando los mismos números para que el resto de los
-    // barrios salga idéntico.
-    for _ in 0..64 {
-        for _ in 0..4 {
-            b.r.next();
-        }
-    }
-    // campamentos: (centro, nombre, portones)
-    let camps: [(f32, f32, &str, &[char]); 6] = [
-        (-220.0, -264.0, "Campamento del Puerto", &['s', 'e']),
-        (176.0, -220.0, "Campamento de los Silos", &['w', 's']),
-        (264.0, 220.0, "Campamento del Este", &['w', 'n']),
-        (88.0, 264.0, "Campamento del Parque", &['n', 'w']),
-        (-176.0, 220.0, "Campamento Jardín", &['n', 'e']),
-        (-264.0, -44.0, "Campamento del Cerro", &['e', 's']),
-    ];
-    let mut used: Vec<(i32, i32)> = Vec::new();
-    for (k, &(cx, cz, name, gates)) in camps.iter().enumerate() {
-        used.push((cx as i32, cz as i32));
-        b.w.add_box(cx, cz, BLOCK, 0.16, BLOCK, Mat::Sidewalk);
+    /// Campamento enemigo de los barrios: muros, galpón o contenedores y cajas de cobertura.
+    fn camp(&mut self, k: usize, cx: f32, cz: f32, name: &'static str, gates: &[char]) -> Outpost {
+        use std::f32::consts::PI;
         let mut op = Outpost::new(OutpostId::Camp, name, name, "", "", 'C', cx, cz);
         op.camp = true;
-        b.outpost_walls(cx, cz, gates);
-        // galpón o contenedores y cajas de cobertura
+        self.outpost_walls(cx, cz, gates);
         if k % 2 == 0 {
-            b.hall(cx + 4.0, cz - 5.0, 12.0, 9.0, 4.0, Mat::Facade((3 + k) as u8 % mat::FACADES), &['s']);
+            self.hall(cx + 4.0, cz - 5.0, 12.0, 9.0, 4.0, Mat::Facade((3 + k) as u8 % mat::FACADES), &['s']);
         } else {
-            b.w.add_container(cx - 6.0, cz - 7.0, true, 2, k % 4);
-            b.w.add_container(cx + 7.0, cz - 4.0, false, 1, (k + 1) % 4);
+            self.w.add_container(cx - 6.0, cz - 7.0, true, 2, k % 4);
+            self.w.add_container(cx + 7.0, cz - 4.0, false, 1, (k + 1) % 4);
             op.cover_around(cx - 6.0, cz - 7.0, 6.2, 2.6);
             op.cover_around(cx + 7.0, cz - 4.0, 2.6, 6.2);
         }
         for (x, z) in [(-8.0, 6.0), (6.0, 8.0), (-2.0, 1.0), (9.0, -10.0)] {
-            b.op_crate(&mut op, cx + x, cz + z, 2.0, 1.2, 2.0);
+            self.op_crate(&mut op, cx + x, cz + z, 2.0, 1.2, 2.0);
         }
         op.patrol = vec![[cx - 11.0, cz - 11.0], [cx + 11.0, cz - 11.0], [cx + 11.0, cz + 11.0], [cx - 11.0, cz + 11.0]];
         op.unit(cx - 10.0, cz + 10.0, Role::Patrol).unit(cx + 9.0, cz - 9.0, Role::Patrol).unit(cx + 2.0, cz + 4.0, Role::Guard).unit(cx - 5.0, cz - 3.0, Role::Guard);
@@ -1153,98 +745,38 @@ fn outer(b: &mut B, vehicles: &mut Vec<(Vec3, f32, u8)>, outposts: &mut Vec<Outp
             op.sniper(cx - 6.0, cz - 7.0, 5.4);
         }
         op.turret(cx + 12.0, cz + 12.0, -PI * 0.25);
+        op
+    }
+}
+
+/// Arma el Distrito Sur (Ciudad 3.0, trazado porteño de `town`) en `w`.
+pub fn build(w: &mut World) -> CityData {
+    let mut b = B { w, r: Rng::new(SEED), spots: Vec::new() };
+    let t = town::build(&mut b);
+    let mut outposts = b.outposts(&t.outpost_pos);
+    for (k, &(cx, cz, name, gates)) in t.camps.iter().enumerate() {
+        let op = b.camp(k, cx, cz, name, gates);
         outposts.push(op);
     }
-    // Ciudad 2.0: plaza, bulevar, diagonal, rotondas y subte ocupan sus manzanas
-    used.extend(city2::reserved().blocks);
-    stations.extend(city2::build(b));
-    // manzanas por barrio
-    for bx in BC_ALL {
-        for bz in BC_ALL {
-            if !is_outer(bx, bz) || used.contains(&(bx as i32, bz as i32)) {
-                continue;
-            }
-            b.w.add_box(bx, bz, BLOCK, 0.16, BLOCK, Mat::Sidewalk);
-            for (lx, lz) in [(-15.0, -15.0), (15.0, 15.0), (15.0, -15.0), (-15.0, 15.0)] {
-                b.lamp(bx + lx, bz + lz);
-            }
-            let r = b.r.next();
-            if bz < -CORE_A {
-                // Puerto: industria, contenedores, tanques y galpones
-                match (r * 6.0) as u32 {
-                    0 | 1 => b.block_containers(bx, bz),
-                    2 | 3 => b.block_industrial(bx, bz),
-                    4 => b.block_hall(bx, bz),
-                    _ => b.block_lot(bx, bz),
-                }
-            } else if bz > CORE_A {
-                // Barrio Jardín: casas bajas, patios y parques
-                let k = ((bx * 7.0 + bz * 3.0).abs() as u32) % 17;
-                b.street_stall(bx + 9.0, bz + 14.2, k);
-                match (r * 6.0) as u32 {
-                    0 | 1 => {
-                        b.block_apts(bx, bz, false, true);
-                        b.storefront(bx - 6.0, bz - 5.0, 14.0, 12.0, k);
-                    }
-                    2 => b.block_courtyard(bx, bz),
-                    3 => b.block_park(bx, bz),
-                    4 => b.block_plaza(bx, bz),
-                    _ => b.block_market(bx, bz),
-                }
-            } else if bx > CORE_A {
-                // Centro Financiero: torres altas
-                match (r * 5.0) as u32 {
-                    0 => b.block_skyscraper(bx, bz),
-                    1 => b.block_tower(bx, bz, 48.0, &[]),
-                    2 => b.block_tower(bx, bz, 36.0, &[]),
-                    3 => b.block_plaza(bx, bz),
-                    _ => b.block_courtyard(bx, bz),
-                }
-            } else {
-                // El Cerro: terrazas, mercados, departamentos y estacionamientos
-                let k = ((bx * 5.0 + bz * 11.0).abs() as u32) % 13;
-                match (r * 6.0) as u32 {
-                    0 => b.block_terrace_park(bx, bz),
-                    1 => b.block_market(bx, bz),
-                    2 | 3 => {
-                        b.block_apts(bx, bz, true, true);
-                        b.storefront(bx - 6.0, bz - 5.0, 14.0, 12.0, k);
-                        b.street_stall(bx - 9.0, bz + 14.2, k + 1);
-                    }
-                    4 => b.block_lot(bx, bz),
-                    _ => b.block_park(bx, bz),
-                }
-            }
-        }
-    }
-    // segunda autopista, sobre la calle del puerto
-    b.highway(-242.0, -280.0, 280.0, 7.14);
-    for i in 0..10 {
-        let x = -250.0 + i as f32 * 52.0 + b.r.f() * 8.0;
-        let z = -242.0 + if b.r.next() < 0.5 { -2.6 } else { 2.6 };
-        let m = b.mat_car();
-        b.car(x, z, true, m, 7.14);
-    }
-    // más autos manejables en las calles de los barrios nuevos
-    let streets = [-242.0f32, -198.0, -156.0, 156.0, 198.0, 242.0, -110.0, -66.0, -22.0, 22.0, 66.0, 110.0];
-    let mut placed = 0;
-    while placed < 60 {
-        let s = streets[b.r.idx(streets.len())];
-        let t = b.r.signed() * (a - 14.0);
-        let ax = b.r.next() < 0.5;
-        let lane = if b.r.next() < 0.5 { -4.2 } else { 4.2 };
-        let (x, z) = if ax { (t, s + lane) } else { (s + lane, t) };
-        let Mat::Car(c) = b.mat_car() else { unreachable!() };
-        // solo afuera del distrito original y lejos de la autopista nueva
-        if !is_outer(x, z) || ((z + 242.0).abs() < 7.0 && ax) {
-            continue;
-        }
-        vehicles.push((Vec3::new(x, 0.0, z), if ax { FRAC_PI_2 } else { 0.0 }, c));
-        placed += 1;
-    }
-    // bordes naturales (río, cerros, bosque); los autos que caían en esa franja se sacan
-    city_edge::build(b);
-    vehicles.retain(|(p, _, _)| p.x.abs() < 277.0 && p.z.abs() < 277.0);
+    let xs: Vec<f32> = town::XS.iter().map(|s| s.c).collect();
+    let zs: Vec<f32> = town::ZS.iter().map(|s| s.c).collect();
+    // drones de vigilancia sobre las avenidas (rectángulos entre avenidas)
+    let (ax, az) = ([town::XS[2].c, town::XS[4].c, town::XS[7].c, town::XS[9].c], [town::ZS[0].c, town::ZS[2].c, town::ZS[5].c, town::ZS[8].c]);
+    let drone_routes = vec![
+        vec![[ax[0], az[0]], [ax[3], az[0]], [ax[3], az[1]], [ax[0], az[1]]],
+        vec![[ax[1], az[1]], [ax[2], az[1]], [ax[2], az[2]], [ax[1], az[2]]],
+        vec![[ax[0], az[2]], [ax[3], az[2]], [ax[3], az[3]], [ax[0], az[3]]],
+        vec![[ax[0], az[0]], [ax[1], az[0]], [ax[1], az[3]], [ax[0], az[3]]],
+        vec![[ax[2], az[0]], [ax[3], az[0]], [ax[3], az[3]], [ax[2], az[3]]],
+        vec![[ax[1], az[0]], [ax[2], az[0]], [ax[2], az[2]], [ax[1], az[2]]],
+    ];
+    // bordes naturales (río, cerros, bosque) y carteles y neón en las azoteas
+    city_edge::build(&mut b);
+    city2::decor(b.w, &[]);
+    let loot_spots = std::mem::take(&mut b.spots);
+    let mut vehicles = t.vehicles;
+    vehicles.retain(|(p, _, _)| p.x.abs() < 277.0 && p.z.abs() < 277.0 && b.w.box_at(*p + Vec3::Y * 0.8).is_none());
+    CityData { outposts, safe_pos: t.safe_pos, drone_routes, vehicles, loot_spots, xs, zs, blocks: t.blocks, stations: t.stations }
 }
 
 #[cfg(test)]
@@ -1271,15 +803,16 @@ mod tests {
     }
 
     #[test]
-    fn decorado_de_barrios() {
+    fn ciudad_porteña_llena() {
         use crate::mat::Mat;
         let l = crate::maps::build_level(crate::maps::MapId::Ciudad);
         let n = |f: &dyn Fn(Mat) -> bool| l.world.visuals.iter().filter(|v| f(v.mat)).count();
         let carteles = n(&|m| matches!(m, Mat::Billboard(_)));
-        let neon = n(&|m| matches!(m, Mat::Neon(_))) / 4;
-        let bolardos = n(&|m| m == Mat::Bollard);
-        eprintln!("carteles {carteles} · techos con neón {neon} · bolardos y tachos {bolardos}");
-        assert!(carteles > 15 && neon > 10 && bolardos > 20);
+        let frentes = n(&|m| matches!(m, Mat::Front(_) | Mat::Chapa(_)));
+        let locales = n(&|m| matches!(m, Mat::Shop(_)));
+        eprintln!("carteles {carteles} · fachadas {frentes} · plantas bajas {locales} · colisionadores {}", l.world.colliders().count());
+        assert!(carteles > 10 && frentes > 400 && locales > 400);
+        assert_eq!(l.city.as_ref().unwrap().stations.len(), 3);
     }
 
     #[test]

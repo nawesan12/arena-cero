@@ -5,7 +5,6 @@ use crate::game::GameRes;
 use crate::hud::Fonts;
 use crate::player::{LocalPlayer, Look};
 use crate::world_render::LevelRes;
-use arena_sim::city::{BC_ALL, BLOCK};
 use arena_sim::enemies::Alert;
 use bevy::prelude::*;
 
@@ -53,11 +52,9 @@ fn plan(level: &arena_sim::Level) -> Image {
             }
         }
     };
-    if level.info.city {
-        for bx in BC_ALL {
-            for bz in BC_ALL {
-                rect(bx - BLOCK / 2.0, bz - BLOCK / 2.0, bx + BLOCK / 2.0, bz + BLOCK / 2.0, [0.196, 0.231, 0.251, 1.0]);
-            }
+    if let Some(c) = level.city.as_ref() {
+        for b in &c.blocks {
+            rect(b.x0, b.z0, b.x1, b.z1, [0.196, 0.231, 0.251, 1.0]);
         }
     }
     // el río (los huecos grandes del piso)
