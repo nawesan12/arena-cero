@@ -3,5 +3,9 @@ name = "arena_sim"
 edition.workspace = true
 version.workspace = true
 
+[features]
+serde = ["dep:serde", "glam/serde"]
+
 [dependencies]
 glam.workspace = true
+serde = { version = "1", features = ["derive"], optional = true }

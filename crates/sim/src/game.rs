@@ -205,6 +205,8 @@ pub struct Game {
     blasting: bool,
     /// Jugadores de este paso (cooperativo: uno por jugador; en solitario, uno).
     pub targets: Vec<Target>,
+    /// Jugadores remotos (online).
+    pub pawns: Vec<crate::pawn::Pawn>,
 }
 
 impl Game {
@@ -256,6 +258,7 @@ impl Game {
             blackout: false,
             blasting: false,
             targets: Vec::new(),
+            pawns: Vec::new(),
         };
         if let Some(c) = level.city.as_ref() {
             let n_st = c.stations.len();

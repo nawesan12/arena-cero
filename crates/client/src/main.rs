@@ -1,3 +1,5 @@
+// en Windows, sin la ventana negra de consola al lado del juego (salvo compilado en modo debug)
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //! Arena Cero, cliente nativo.
 //!
 //! Uso: `arena-cero [--op 1-8 | --libre | --map ciudad|deposito|fundicion|cantera|azotea] [--at x,z,yaw,pitch] [--weapon 1-4] [--shot archivo.png]`

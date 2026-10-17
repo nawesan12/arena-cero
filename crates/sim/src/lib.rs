@@ -14,6 +14,7 @@ pub mod maps;
 pub mod mat;
 pub mod nav;
 pub mod objectives;
+pub mod pawn;
 pub mod people;
 pub mod perks;
 pub mod player;

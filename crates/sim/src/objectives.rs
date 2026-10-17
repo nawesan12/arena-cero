@@ -156,16 +156,7 @@ impl Game {
                 run.obj.hold_t += dt;
                 if run.obj.hold_t >= time {
                     run.obj.hold_t = 0.0;
-                    let id = c.outposts[op].id;
-                    if matches!(id, OutpostId::Antena | OutpostId::Trenes) {
-                        run.obj.charge = Some(Charge { op, t: 4.0, beep: 0.0 });
-                        let p = c.outposts[op].obj_pos.unwrap_or(Vec3::ZERO);
-                        self.events.push(GameEvent::Sound(Snd::Plant));
-                        self.banner("CARGA PLANTADA", "Alejate: explota en 4 segundos");
-                        self.make_noise(p, 18.0);
-                    } else {
-                        self.complete_objective(op, level);
-                    }
+                    self.objective_reached(op, a.pos, level);
                 }
             }
             _ => run.obj.hold_t = 0.0,
@@ -223,6 +214,28 @@ impl Game {
                 self.events.push(GameEvent::OfferPerk);
             }
         }
+    }
+
+    /// Se terminó de mantener F en un objetivo: carga con cuenta regresiva (antena, trenes) o listo.
+    pub(crate) fn objective_reached(&mut self, op: usize, _by: Vec3, level: &mut Level) {
+        let Some(c) = level.city.as_ref() else { return };
+        let id = c.outposts[op].id;
+        if matches!(id, OutpostId::Antena | OutpostId::Trenes) {
+            let p = c.outposts[op].obj_pos.unwrap_or(Vec3::ZERO);
+            if let Some(run) = self.city.as_mut() {
+                run.obj.charge = Some(Charge { op, t: 4.0, beep: 0.0 });
+            }
+            self.events.push(GameEvent::Sound(Snd::Plant));
+            self.banner("CARGA PLANTADA", "Alejate: explota en 4 segundos");
+            self.make_noise(p, 18.0);
+        } else {
+            self.complete_objective(op, level);
+        }
+    }
+
+    /// `find_interact` para los jugadores remotos.
+    pub(crate) fn find_interact_pub(&self, level: &Level, a: &Actor) -> Option<Interact> {
+        self.find_interact(level, a)
     }
 
     fn step_charge(&mut self, level: &mut Level, a: &Actor, dt: f32) {

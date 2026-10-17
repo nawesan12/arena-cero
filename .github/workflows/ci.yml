@@ -27,7 +27,7 @@ jobs:
       matrix:
         include:
           - { name: macos-arm64, os: macos-latest, bin: arena-cero }
-          - { name: macos-x64, os: macos-13, bin: arena-cero }
+          - { name: macos-x64, os: macos-15-intel, bin: arena-cero }
           - { name: windows-x64, os: windows-latest, bin: arena-cero.exe }
           - { name: linux-x64, os: ubuntu-latest, bin: arena-cero }
     runs-on: ${{ matrix.os }}

@@ -898,12 +898,15 @@ impl Game {
             }
         }
         let feet = Vec3::new(a.pos.x, a.feet, a.pos.z);
+        // cooperativo: cualquiera de los jugadores cumple (llegar, subir, usar, escapar)
+        let host_use = a.f_held && self.driving.is_none();
+        let all: Vec<(Vec3, bool)> = std::iter::once((feet, host_use)).chain(self.pawns.iter().filter(|p| p.alive()).map(|p| (Vec3::new(p.state.pos.x, p.state.feet(), p.state.pos.z), p.input.use_held))).collect();
         let mut done = false;
         let mut fail: Option<&'static str> = None;
         let mut marks = Vec::new();
         let mut text = s.text.to_string();
         let mut progress = None;
-        let near = |p: Vec3, r: f32| (p.x - feet.x).hypot(p.z - feet.z) < r && (p.y < 2.0 || feet.y > p.y - 2.5);
+        let near = |p: Vec3, r: f32| all.iter().any(|(f, _)| (p.x - f.x).hypot(p.z - f.z) < r && (p.y < 2.0 || f.y > p.y - 2.5));
         match &s.goal {
             Goal::Reach { pos, r } => {
                 marks.push(*pos);
@@ -915,7 +918,7 @@ impl Game {
                     done = near(p, *r);
                 }
             }
-            Goal::Climb(h) => done = feet.y > *h,
+            Goal::Climb(h) => done = all.iter().any(|(f, _)| f.y > *h),
             Goal::Use { points, secs, label } => {
                 let mut active = None;
                 for (k, p) in points.iter().enumerate() {
@@ -923,7 +926,7 @@ impl Game {
                         continue;
                     }
                     marks.push(*p);
-                    if (p.x - feet.x).hypot(p.z - feet.z) < 2.4 && (p.y - 1.0 - feet.y).abs() < 1.4 {
+                    if all.iter().any(|(f, _)| (p.x - f.x).hypot(p.z - f.z) < 2.4 && (p.y - 1.0 - f.y).abs() < 1.4) {
                         active = Some(k);
                     }
                 }
@@ -933,7 +936,9 @@ impl Game {
                 }
                 progress = Some(n_used as f32 / points.len() as f32);
                 if let Some(k) = active {
-                    if a.f_held && self.driving.is_none() {
+                    let pk = points[k];
+                    let holding = all.iter().any(|(f, u)| *u && (pk.x - f.x).hypot(pk.z - f.z) < 2.4 && (pk.y - 1.0 - f.y).abs() < 1.4);
+                    if holding {
                         cp.hold += dt;
                     } else {
                         cp.hold = 0.0;
@@ -1020,7 +1025,7 @@ impl Game {
                 }
             }
             Goal::Escape { from, r } => {
-                let d = (from.x - feet.x).hypot(from.z - feet.z);
+                let d = all.iter().map(|(f, _)| (from.x - f.x).hypot(from.z - f.z)).fold(0.0f32, f32::max);
                 text = format!("{} · {:.0} m", s.text, (r - d).max(0.0).ceil());
                 progress = Some((d / r).min(1.0));
                 done = d >= *r;
