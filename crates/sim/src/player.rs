@@ -33,6 +33,8 @@ pub struct PlayerInput {
 pub struct Hook {
     pub pt: Vec3,
     pub t: f32,
+    /// Largo de la cuerda: te balanceás alrededor del punto sin alejarte más que esto.
+    pub len: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,7 +136,14 @@ impl PlayerState {
     /// FOV vertical en grados que pide el estado (el cliente lo suaviza).
     pub fn target_fov(&self, rail_scope: bool) -> f32 {
         let aim_fov = if rail_scope { AIM_FOV - 24.0 } else { AIM_FOV };
-        BASE_FOV + (aim_fov - BASE_FOV) * self.aim_t + if self.slide > 0.0 { 6.0 } else { 0.0 } + if self.dash_t > 0.0 { 10.0 } else { 0.0 }
+        // con velocidad (balanceo, caída, dash) se abre la vista: sensación de rapidez
+        let speed = ((self.vel.length() - 11.0) * 0.55).clamp(0.0, 14.0);
+        BASE_FOV + (aim_fov - BASE_FOV) * self.aim_t + if self.slide > 0.0 { 6.0 } else { 0.0 } + if self.dash_t > 0.0 { 10.0 } else { 0.0 } + speed * (1.0 - self.aim_t)
+    }
+
+    /// De dónde sale la cuerda (cintura del jugador).
+    fn rope_origin(&self) -> Vec3 {
+        self.pos - Vec3::Y * 0.5
     }
 
     pub fn release_hook(&mut self, boost: bool, ev: &mut Vec<PlayerEvent>) {
@@ -143,7 +152,11 @@ impl PlayerState {
         }
         self.hook_cd = 0.2;
         if boost {
+            // salir despedido: se conserva toda la velocidad del balanceo y se suma un impulso
+            // hacia arriba y hacia donde mirás
+            let f = look_dir(self.yaw, 0.0);
             self.vel.y = self.vel.y.max(0.0) + 7.5;
+            self.vel += f * 4.0;
             ev.push(PlayerEvent::HookBoost);
         }
     }
@@ -159,7 +172,9 @@ impl PlayerState {
         self.hook_cd = 0.3;
         match hook_cast(world, self.eye(), self.look_dir()) {
             Some(pt) => {
-                self.hook = Some(Hook { pt, t: 0.0 });
+                // la cuerda arranca un poco más corta que la distancia: el primer tirón te despega
+                let len = (pt - self.rope_origin()).length() * 0.9;
+                self.hook = Some(Hook { pt, t: 0.0, len });
                 self.jumps = self.jumps.min(1);
                 ev.push(PlayerEvent::HookFired);
             }
@@ -167,29 +182,60 @@ impl PlayerState {
         }
     }
 
-    fn update_hook(&mut self, dt: f32, ev: &mut Vec<PlayerEvent>) {
+    /// Gancho como péndulo: Shift recoge cuerda (y tira), C da cuerda, W/A/S/D dan envión
+    /// perpendicular a la cuerda. La restricción de largo se aplica después de la gravedad.
+    fn update_hook(&mut self, dt: f32, wish: Vec3, reel_in: bool, reel_out: bool, ev: &mut Vec<PlayerEvent>) {
         self.hook_cd -= dt;
+        let origin = self.rope_origin();
         let Some(hk) = self.hook.as_mut() else { return };
         hk.t += dt;
         if hk.t < 0.08 {
             return; // el cable todavía viaja
         }
-        let (pt, t) = (hk.pt, hk.t);
-        let dv = Vec3::new(pt.x - self.pos.x, pt.y - (self.pos.y - 0.5), pt.z - self.pos.z);
-        let d = dv.length().max(0.001);
-        if d < 1.8 || t > 3.5 {
+        let to = hk.pt - origin;
+        let d = to.length().max(0.001);
+        let r = to / d;
+        if d < 1.8 || hk.t > 8.0 {
             self.release_hook(false, ev);
             return;
         }
-        let pull = 58.0;
-        self.vel += dv / d * pull * dt;
-        self.vel.y += 13.0 * dt;
-        let vs = self.vel.length();
-        if vs > 34.0 {
-            self.vel *= 34.0 / vs;
+        if reel_in {
+            hk.len = (hk.len - 16.0 * dt).max(2.0);
+            // recoger también tira: llegás rápido a una cornisa
+            self.vel += r * 26.0 * dt;
         }
+        if reel_out {
+            hk.len = (hk.len + 9.0 * dt).min(super_len());
+        }
+        // envión: la parte del input perpendicular a la cuerda
+        let tang = wish - r * wish.dot(r);
+        self.vel += tang * 15.0 * dt;
         self.on_ground = false;
         self.slide = 0.0;
+    }
+
+    /// Mantiene el largo de la cuerda: si te pasás, te devuelve y saca la velocidad hacia afuera.
+    fn rope_constraint(&mut self, dt: f32) {
+        let origin = self.rope_origin();
+        let Some(hk) = self.hook.as_ref() else { return };
+        if hk.t < 0.08 {
+            return;
+        }
+        let to = hk.pt - origin;
+        let d = to.length().max(0.001);
+        let r = to / d;
+        if d > hk.len {
+            let out = -self.vel.dot(r);
+            if out > 0.0 {
+                self.vel += r * out;
+            }
+            // corrección suave del exceso (sin tironear de golpe)
+            self.vel += r * (d - hk.len) * 12.0 * dt;
+        }
+        let vs = self.vel.length();
+        if vs > 45.0 {
+            self.vel *= 45.0 / vs;
+        }
     }
 
     /// Un paso de simulación.
@@ -279,7 +325,8 @@ impl PlayerState {
         if input.hook {
             self.fire_hook(world, ev);
         }
-        self.update_hook(dt, ev);
+        let wish = Vec3::new(wx, 0.0, wz) + if input.forward > 0.0 && self.hook.is_some() { Vec3::Y * 0.25 } else { Vec3::ZERO };
+        self.update_hook(dt, wish, input.sprint, input.crouch, ev);
         if input.jump {
             if self.hook.is_some() {
                 self.release_hook(true, ev);
@@ -301,6 +348,7 @@ impl PlayerState {
             }
         }
         self.vel.y -= 24.0 * dt;
+        self.rope_constraint(dt);
 
         let mut feet = self.feet();
         let n_sub = ((self.horizontal_speed() * dt / 0.3).ceil() as i32).clamp(1, 8);
@@ -349,6 +397,11 @@ impl PlayerState {
         self.pos.z = self.pos.z.clamp(-lim, lim);
         self.shake = (self.shake - dt * 2.2).max(0.0);
     }
+}
+
+/// Cuerda máxima: lo que alcanza el gancho.
+fn super_len() -> f32 {
+    HOOK_RANGE
 }
 
 /// Dirección de la mirada (convención de cámara: −Z adelante, rotación YXZ).
@@ -447,11 +500,39 @@ mod tests {
     }
 
     #[test]
+    fn el_gancho_balancea_como_pendulo() {
+        // punto alto, el jugador cuelga y se le da envión hacia adelante: pasa por debajo y sube
+        let mut w = World::new(200.0);
+        w.add_block(0.0, 30.0, -20.0, 4.0, 1.0, 4.0, Mat::Concrete);
+        let mut p = PlayerState::new(0.0, 0.0);
+        p.pos = Vec3::new(0.0, 22.0, 0.0);
+        let pt = Vec3::new(0.0, 30.0, -20.0);
+        let len = (pt - p.rope_origin()).length();
+        p.hook = Some(Hook { pt, t: 1.0, len });
+        let mut ev = Vec::new();
+        let mut max_z: f32 = -1e9;
+        let mut min_d: f32 = 1e9;
+        for _ in 0..(60 * 3) {
+            p.step(&PlayerInput { yaw: 0.0, ..Default::default() }, &w, crate::TICK, &mut ev);
+            if p.hook.is_none() {
+                break;
+            }
+            max_z = max_z.max(-p.pos.z);
+            min_d = min_d.min((pt - p.rope_origin()).length());
+            // nunca se aleja más que el largo de la cuerda (con un margen por la corrección suave)
+            assert!((pt - p.rope_origin()).length() < len + 0.6);
+        }
+        // cruzó por debajo del punto hacia el otro lado (z < −20)
+        assert!(max_z > 20.0, "no balanceó: llegó a z = {}", -max_z);
+    }
+
+    #[test]
     fn gancho_tira_hacia_la_pared() {
         let mut w = World::new(60.0);
         w.add_box(0.0, -30.0, 20.0, 20.0, 2.0, Mat::Wall);
         let mut p = PlayerState::new(0.0, 0.0);
-        let ev = run(&mut p, &w, PlayerInput { hook: true, yaw: 0.0, pitch: 0.3, ..Default::default() }, 0.6);
+        // con Shift se recoge la cuerda y te acerca
+        let ev = run(&mut p, &w, PlayerInput { hook: true, sprint: true, yaw: 0.0, pitch: 0.3, ..Default::default() }, 0.6);
         assert!(ev.contains(&PlayerEvent::HookFired));
         assert!(p.pos.z < -5.0, "z = {}", p.pos.z);
     }

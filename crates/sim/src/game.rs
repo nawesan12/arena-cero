@@ -40,6 +40,8 @@ pub enum Snd {
     Crash,
     Decoy,
     Toss,
+    /// Grito de un civil.
+    Scream,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -156,6 +158,7 @@ pub struct Game {
     pub decoys: Vec<crate::economy::Decoy>,
     pub scouts: Vec<crate::economy::Scout>,
     pub director: crate::director::Director,
+    pub people: Vec<crate::people::Person>,
 }
 
 impl Game {
@@ -195,11 +198,14 @@ impl Game {
             decoys: Vec::new(),
             scouts: Vec::new(),
             director: Default::default(),
+            people: Vec::new(),
         };
         if let Some(c) = level.city.as_ref() {
             g.init_city(c.clone(), &mut level.world);
             g.place_loot(level, 80);
             g.spawn_patrols(level, 6);
+            g.spawn_traffic(level, 16);
+            g.spawn_people(level, 80);
         }
         g
     }
@@ -296,6 +302,7 @@ impl Game {
 
     /// Ruido (disparos, explosiones): los soldados tranquilos que lo oyen van a buscar.
     pub fn make_noise(&mut self, pos: Vec3, radius: f32) {
+        self.scare_people(pos, radius * 0.8);
         if self.mode != Mode::City {
             return;
         }
@@ -617,6 +624,11 @@ impl Game {
                 self.damage(i, dmg, Some(dir), false, b, level);
             }
         }
+        for pi in 0..self.people.len() {
+            if self.people[pi].alive && self.people[pi].pos.distance(x.pos) < x.radius * 0.8 {
+                self.hurt_person(pi);
+            }
+        }
         for vi in 0..self.vehicles.len() {
             let v = &self.vehicles[vi];
             let d = (v.pos + Vec3::Y).distance(x.pos);
@@ -659,6 +671,13 @@ impl Game {
                 self.damage_vehicle(vi, dmg, level, body);
                 if hp_before > 0.0 && !self.vehicles[vi].wrecked {
                     any_hit = true;
+                }
+            }
+            if let Some((pi, t)) = self.ray_people(p.origin, p.dir, wt) {
+                let first_enemy = ray_enemies(&self.enemies, p.origin, p.dir, wt, p.origin).first().map_or(f32::MAX, |h| h.dist);
+                if t < first_enemy {
+                    self.hurt_person(pi);
+                    wt = t;
                 }
             }
             let hits = ray_enemies(&self.enemies, p.origin, p.dir, wt, p.origin);
@@ -748,6 +767,7 @@ impl Game {
             }
         }
         self.step_gadgets(dt);
+        self.step_people(level, t.pos, dt);
         self.step_director(level, t.pos, dt);
         self.step_enemy_cars(level, t.pos, t.body, t.light, dt);
         // cadáveres que caen
@@ -1084,6 +1104,15 @@ impl Game {
                     if self.damage(i, dmg, Some(dir), false, v.pos, level) {
                         self.events.push(GameEvent::Mark(Mark::Kill));
                     }
+                }
+            }
+        }
+        if v.speed.abs() > 5.0 {
+            let f = v.forward();
+            for pi in 0..self.people.len() {
+                let rel = self.people[pi].pos - v.pos;
+                if self.people[pi].alive && rel.dot(f).abs() < 2.4 && rel.dot(v.right()).abs() < 1.3 {
+                    self.hurt_person(pi);
                 }
             }
         }

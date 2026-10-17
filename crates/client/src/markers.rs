@@ -255,6 +255,10 @@ fn markers(
 
 fn prompt(game: Res<GameRes>, level: Res<LevelRes>, lp: Res<LocalPlayer>, cursor: Single<&CursorOptions>, mut root: Query<&mut Visibility, With<PromptRoot>>, mut text: Query<&mut Text, With<PromptText>>, mut fill: Query<(&mut Node, &mut Visibility), (With<PromptFill>, Without<PromptRoot>)>) {
     let mut p = game.0.city.as_ref().and_then(|r| r.obj.prompt.clone()).filter(|_| cursor.grab_mode != CursorGrabMode::None);
+    // en el andén se toma el subte
+    if game.0.driving.is_none() && cursor.grab_mode != CursorGrabMode::None && crate::subway::platform_near(&level.0, lp.state.pos).is_some() {
+        p = Some(arena_sim::objectives::Prompt { label: "F · TOMAR EL SUBTE".into(), frac: None });
+    }
     // en un punto de reabastecimiento también está la tienda
     if game.0.driving.is_none() && cursor.grab_mode != CursorGrabMode::None && game.0.shop_near(&level.0, lp.state.pos) {
         let shop = "B · TIENDA";

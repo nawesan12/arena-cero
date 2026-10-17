@@ -70,11 +70,14 @@ pub struct CarAi {
     /// Convoy: al llegar al final de la ruta desaparece (y el evento se pierde).
     pub one_way: bool,
     pub event: Option<u32>,
+    /// Tránsito civil: nunca persigue, frena si tiene algo adelante y, si le disparan, escapa.
+    pub civil: bool,
+    pub scared: f32,
 }
 
 impl CarAi {
     pub fn new(route: Vec<Vec2>, crew: u32, one_way: bool, event: Option<u32>) -> Self {
-        Self { route, idx: 0, mode: AiMode::Patrol, crew, stuck_t: 0.0, reverse_t: 0.0, see_t: 0.0, one_way, event }
+        Self { route, idx: 0, mode: AiMode::Patrol, crew, stuck_t: 0.0, reverse_t: 0.0, see_t: 0.0, one_way, event, civil: false, scared: 0.0 }
     }
 }
 
@@ -186,6 +189,8 @@ impl Vehicle {
         let mut out = AiOut::None;
         let here = Vec2::new(self.pos.x, self.pos.z);
         let p2 = Vec2::new(player.x, player.z);
+        let sees_player = sees_player && !ai.civil;
+        ai.scared = (ai.scared - dt).max(0.0);
         if sees_player {
             ai.see_t = 0.0;
             if ai.mode == AiMode::Patrol && !ai.one_way {
@@ -206,7 +211,7 @@ impl Vehicle {
                         out = AiOut::Arrived;
                     }
                 }
-                (ai.route[ai.idx % ai.route.len()], 13.0)
+                (ai.route[ai.idx % ai.route.len()], if ai.civil { if ai.scared > 0.0 { 22.0 } else { 10.0 } } else { 13.0 })
             }
             AiMode::Chase => {
                 if here.distance(p2) < 16.0 && ai.crew > 0 {
@@ -218,7 +223,16 @@ impl Vehicle {
             AiMode::Parked => (here, 0.0),
         };
         let mut input = DriveInput::default();
-        if ai.mode == AiMode::Parked {
+        // el tránsito frena si tiene al jugador adelante
+        let ahead = {
+            let rel = player - self.pos;
+            let f = self.forward();
+            let along = rel.dot(f);
+            ai.civil && ai.scared <= 0.0 && along > 0.0 && along < 9.0 && rel.dot(self.right()).abs() < 2.2 && (player.y - 1.6 - self.pos.y).abs() < 2.0
+        };
+        if ahead {
+            input.brake = true;
+        } else if ai.mode == AiMode::Parked {
             input.brake = true;
         } else if ai.reverse_t > 0.0 {
             ai.reverse_t -= dt;
@@ -241,7 +255,7 @@ impl Vehicle {
         }
         let impact = self.drive(&input, world, dt);
         // ¿trabado? (choca o casi no avanza queriendo avanzar)
-        if ai.mode != AiMode::Parked && ai.reverse_t <= 0.0 {
+        if ai.mode != AiMode::Parked && ai.reverse_t <= 0.0 && !ahead {
             if impact > 0.0 || (self.speed.abs() < 1.0 && input.throttle > 0.0) {
                 ai.stuck_t += dt;
             } else {

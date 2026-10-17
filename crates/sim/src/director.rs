@@ -152,7 +152,8 @@ impl Game {
             }
             let v = &self.vehicles[vi];
             let eye = v.pos + Vec3::Y * 1.5;
-            let sees = eye.distance(body) < range && level.world.has_los(eye, body) && !crate::economy::smoke_blocks(&self.smoke_spheres(), eye, body);
+            let civil = v.ai.as_ref().is_some_and(|a| a.civil);
+            let sees = !civil && eye.distance(body) < range && level.world.has_los(eye, body) && !crate::economy::smoke_blocks(&self.smoke_spheres(), eye, body);
             let out = self.vehicles[vi].ai_step(&mut level.world, player, sees, dt);
             match out {
                 AiOut::Dismount => {
@@ -198,13 +199,18 @@ impl Game {
             return;
         }
         v.hp -= dmg;
+        if let Some(a) = v.ai.as_mut() {
+            if a.civil {
+                a.scared = 10.0;
+            }
+        }
         if v.hp > 0.0 {
             return;
         }
         v.wrecked = true;
         v.speed = 0.0;
         let p = v.pos + Vec3::Y;
-        let enemy = v.ai.is_some();
+        let enemy = v.ai.as_ref().is_some_and(|a| !a.civil);
         let crew = v.ai.as_ref().map_or(0, |a| a.crew);
         if let Some(a) = v.ai.as_mut() {
             a.crew = 0;
@@ -435,7 +441,7 @@ mod tests {
     fn hay_patrullas_botin_y_aparecen_misiones() {
         let mut l = build_level(MapId::Ciudad);
         let mut g = Game::new(&mut l, 5);
-        assert_eq!(g.vehicles.iter().filter(|v| v.ai.is_some()).count(), 6);
+        assert_eq!(g.vehicles.iter().filter(|v| v.ai.as_ref().is_some_and(|a| !a.civil)).count(), 6);
         assert!(g.loot.len() >= 60);
         // el refugio queda lejos de todo: esperar a la primera misión
         let t = target(Vec3::new(-132.0, 0.16, 150.0));

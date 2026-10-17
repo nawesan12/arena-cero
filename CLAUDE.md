@@ -13,7 +13,7 @@ Toolchain: Rust estable ≥ 1.97.1 (Bevy 0.20 lo exige). Workspace de Cargo:
   Corre a paso fijo de 60 Hz (`TICK`). Acá va toda la lógica de juego (armas, IA, objetivos) para que el servidor
   la ejecute con autoridad.
 - `crates/client` (`arena_client`, binario `arena-cero`): Bevy. Texturas procedurales (`textures.rs`), materiales
-  (`materials.rs`), mallas fundidas por material y zona de 48 m (`world_render.rs`), input + paso fijo + cámara
+  (`materials.rs`), mallas fundidas por material y zona de 88 m (`world_render.rs`), input + paso fijo + cámara
   interpolada (`player.rs`), HUD (`hud.rs`).
 - Más adelante: `crates/server` (headless, autoritativo) y `crates/net` (protocolo).
 
@@ -35,12 +35,11 @@ Reglas del port:
 3. **PvP**: compensación de lag para los disparos y anti-trampas.
 
 ## Orden del port
-Hecho: mundo y colisiones, los 5 mapas (ciudad + 4 arenas), movimiento completo del jugador, render, calidad con
-tope de FPS (F1/F2/F3, siempre con tope: alta 120, 30 fuera de juego), armas (sim + modelos procedurales en primera
-persona, granadas, explosiones), audio sintetizado (efectos + música en 4 capas por tensión), enemigos (`enemies.rs`:
-drones, soldados, francotiradores, comandante, torretas, vigilancia, refuerzos; `nav.rs`: A* por puesto; `game.rs`:
-partida, oleadas, alarmas, puntaje). Falta: objetivos/interacción F/marcar T/mapa Tab/radar, mejoras entre
-oleadas, campaña, menú, servidor.
+Hecho (detalle en `docs/`): todo el port de la web (mundo, 5 mapas, jugador, armas, audio, enemigos con A*,
+objetivos, F/T/Tab, mejoras, HUD) y además vehículos, ciudad de 590 m con barrios y campamentos, patrullas en auto,
+misiones dinámicas, economía/tienda/gadgets, día y noche, Ciudad 2.0 (cajas giradas, plaza, bulevar curvo,
+diagonal, rotondas, locales, subte con 3 estaciones), peatones y tránsito, gancho-péndulo.
+Falta: campaña de oleadas con cambio de mapa y menú, campaña más larga, servidor y cooperativo.
 
 1. **Jugador** (`18-ciclo-de-juego.js`, `21-gancho...js`): CharacterBody3D con correr, agacharse/deslizar, doble salto, dash (Q) y gancho (Ctrl/E). Valores: velocidad 7 (10 corriendo), salto 8.2, gravedad 24, gancho 55 m con tirón 58 y tope 34 m/s, dash 24 m/s 0,16 s cada 3 s.
 2. **Armas** (`04-armas.js`, `16-disparo...js`, `06-materiales...js`): rifle, escopeta (9 perdigones), riel (atraviesa), lanzagranadas. Apuntado con click derecho, retroceso, críticos al núcleo/cabeza ×2.
@@ -53,3 +52,7 @@ oleadas, campaña, menú, servidor.
 
 ## Hoja de ruta después del port
 Noche y linterna · gadgets (humo, señuelo, dron explorador) · economía y tienda en el refugio · árbol de habilidades · guardado · vehículos · clima · más roles enemigos (médico, ingeniero, perro) · contraataques · jefe final · interiores detallados y destrucción · cooperativo 2–4.
+
+## Documentación
+
+Ver `docs/JUGABILIDAD.md`, `docs/ARQUITECTURA.md` y `docs/HISTORIAL.md`. Mantenelas al día con cada cambio.

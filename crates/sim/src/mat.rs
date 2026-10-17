@@ -47,6 +47,10 @@ pub enum Mat {
     /// 0..4: toldos del mercado.
     Awning(u8),
     Statue,
+    /// Azulejos blancos del subte.
+    Tile,
+    /// Balasto de las vías.
+    Gravel,
 }
 
 pub const FACADES: u8 = 8;

@@ -150,6 +150,8 @@ impl Looks {
             Mat::Mint => (unlit(0x5dffb0), None),
             Mat::Awning(i) => (lit(AWNING[i as usize % 4], 0.8, 0.0), None),
             Mat::Statue => (lit(0x7a8a80, 0.45, 0.6), None),
+            Mat::Tile => (tex(&t.tile, 0xe8eef0, 0.35, 0.0), Some(0.8)),
+            Mat::Gravel => (tex(&t.rock, 0x6a645c, 1.0, 0.0), Some(1.5)),
         }
     }
 }

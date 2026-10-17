@@ -182,6 +182,12 @@ impl Game {
                 }
                 Some(Interact::Loot { idx }) => self.take_loot(idx),
                 Some(Interact::Drive { vehicle }) => {
+                    // robar un auto del tránsito: el conductor se baja corriendo
+                    if self.vehicles[vehicle].ai.as_ref().is_some_and(|a| a.civil) {
+                        self.vehicles[vehicle].ai = None;
+                        let p = self.vehicles[vehicle].pos;
+                        self.scare_people(p, 12.0);
+                    }
                     self.driving = Some(vehicle);
                     self.events.push(GameEvent::Sound(Snd::Pickup));
                 }

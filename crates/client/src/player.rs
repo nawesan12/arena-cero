@@ -206,8 +206,8 @@ fn mouse_look(motion: Res<AccumulatedMouseMotion>, cursor: Single<&CursorOptions
     look.sway_y = (look.sway_y + d.y * 0.0001).clamp(-0.05, 0.05);
 }
 
-fn latch_input(key: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>, scroll: Res<AccumulatedMouseScroll>, cursor: Single<&CursorOptions>, perks: Res<PerkState>, shop: Res<crate::shop::ShopOpen>, mut latch: ResMut<Latch>) {
-    if cursor.grab_mode == CursorGrabMode::None || perks.active() || shop.0 {
+fn latch_input(key: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>, scroll: Res<AccumulatedMouseScroll>, cursor: Single<&CursorOptions>, perks: Res<PerkState>, shop: Res<crate::shop::ShopOpen>, subway: Res<crate::subway::SubwayOpen>, mut latch: ResMut<Latch>) {
+    if cursor.grab_mode == CursorGrabMode::None || perks.active() || shop.0 || subway.0 {
         return;
     }
     latch.jump |= key.just_pressed(KeyCode::Space);
@@ -244,9 +244,9 @@ fn step_player(
     mut rig: ResMut<GunRig>,
     mut fx: ResMut<Fx>,
     mut snd: ResMut<Sounds>,
-    (mut perks, shop, torch): (ResMut<PerkState>, Res<crate::shop::ShopOpen>, Res<crate::daynight::Flashlight>),
+    (mut perks, shop, torch, subway): (ResMut<PerkState>, Res<crate::shop::ShopOpen>, Res<crate::daynight::Flashlight>, Res<crate::subway::SubwayOpen>),
 ) {
-    if perks.active() || shop.0 {
+    if perks.active() || shop.0 || subway.0 {
         return;
     }
     let playing = cursor.grab_mode != CursorGrabMode::None;
@@ -398,6 +398,7 @@ fn step_player(
                 Snd::Crash => snd.play(S::Crash),
                 Snd::Decoy => snd.play_vol(S::Beep, 0.6),
                 Snd::Toss => snd.play(S::Toss),
+                Snd::Scream => snd.play_vol(S::Hurt, 0.5),
             },
             GameEvent::Burst { pos, color, n, speed, life } => fx.burst(pos, color, n, speed, life),
             GameEvent::Tracer { a, b, color, life } => fx.tracer(a, b, color, life),

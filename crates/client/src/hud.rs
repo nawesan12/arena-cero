@@ -701,6 +701,11 @@ fn compass(
         for m in &game.0.director.missions {
             items.push((m.pos, '!', Color::srgb(1.0, 0.42, 0.18)));
         }
+        for st in &c.stations {
+            if st.entrance.distance(lp.state.pos) < 160.0 {
+                items.push((st.entrance, 'M', CYAN));
+            }
+        }
         items.push((c.safe_pos, '+', MINT));
         for (i, op) in c.outposts.iter().enumerate() {
             if run.ops[i].cleared {

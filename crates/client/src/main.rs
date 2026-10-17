@@ -16,11 +16,13 @@ mod hook_view;
 mod hud;
 mod markers;
 mod materials;
+mod people_view;
 mod perks;
 mod player;
 mod quality;
 mod render_scale;
 mod shop;
+mod subway;
 mod tacmap;
 mod textures;
 mod vehicles_view;
@@ -82,7 +84,7 @@ fn main() {
         }))
         .insert_resource(args)
         .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin, render_scale::RenderScalePlugin, gun::GunPlugin, fx::FxPlugin, audio::AudioSynthPlugin, enemies_view::EnemiesViewPlugin, markers::MarkersPlugin, perks::PerksPlugin, tacmap::TacMapPlugin, hook_view::HookViewPlugin, vehicles_view::VehiclesViewPlugin))
-        .add_plugins((daynight::DayNightPlugin, shop::ShopPlugin, extras_view::ExtrasViewPlugin))
+        .add_plugins((daynight::DayNightPlugin, shop::ShopPlugin, extras_view::ExtrasViewPlugin, people_view::PeopleViewPlugin, subway::SubwayPlugin))
         .add_systems(PreStartup, setup)
         .add_systems(Update, (world_render::follow_sky, world_render::animate_lava, auto_shot, bench))
         .run();

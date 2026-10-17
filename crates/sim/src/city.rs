@@ -2,6 +2,9 @@
 //! Grilla de 7×7 manzanas de 32 m, calles de 12 m, muro a ±164 m y semilla fija 20261016.
 
 use crate::mat::{self, Mat};
+
+#[path = "city2.rs"]
+pub mod city2;
 use crate::rng::Rng;
 use crate::world::{ColliderId, CylAxis, Cylinder, STEP, VisualBox, VisualGroup, World};
 use glam::Vec3;
@@ -140,6 +143,8 @@ pub struct CityData {
     pub loot_spots: Vec<Vec3>,
     /// Calles (coordenada de cada calle, en X y en Z) para rutas de patrullas y convoyes.
     pub streets: Vec<f32>,
+    /// Estaciones de subte.
+    pub stations: Vec<city2::Station>,
 }
 
 #[derive(Clone, Copy)]
@@ -588,7 +593,7 @@ impl B<'_> {
             let mut op = Outpost::new(Antena, "Antena", "Antena de comunicaciones", "Sin antena no llegan drones de refuerzo", "Plantar carga en la antena", 'A', cx, cz);
             self.outpost_walls(cx, cz, &['e', 's']);
             let mut g = VisualGroup { origin: Vec3::new(cx, 0.0, cz), boxes: Vec::new() };
-            let mut am = |w: f32, h: f32, d: f32, x: f32, y: f32, z: f32, m: Mat| g.boxes.push(VisualBox { center: Vec3::new(x, y, z), size: Vec3::new(w, h, d), mat: m, shadow: true });
+            let mut am = |w: f32, h: f32, d: f32, x: f32, y: f32, z: f32, m: Mat| g.boxes.push(VisualBox { center: Vec3::new(x, y, z), size: Vec3::new(w, h, d), mat: m, shadow: true, yaw: 0.0 });
             for (lx, lz) in [(-1.6, -1.6), (1.6, -1.6), (-1.6, 1.6), (1.6, 1.6)] {
                 am(0.35, 24.0, 0.35, lx, 12.0, lz, Mat::Steel);
             }
@@ -1075,7 +1080,8 @@ pub fn build(w: &mut World) -> CityData {
 
     // barrios nuevos alrededor del distrito original
     let mut outposts = outposts;
-    outer(&mut b, &mut vehicles, &mut outposts);
+    let mut stations = Vec::new();
+    outer(&mut b, &mut vehicles, &mut outposts, &mut stations);
 
     let drone_routes = vec![
         vec![[-286.0, -286.0], [286.0, -286.0], [286.0, -198.0], [-286.0, -198.0]],
@@ -1090,12 +1096,12 @@ pub fn build(w: &mut World) -> CityData {
     ];
     let loot_spots = std::mem::take(&mut b.spots);
     let streets = vec![-242.0, -198.0, -156.0, -110.0, -66.0, -22.0, 22.0, 66.0, 110.0, 156.0, 198.0, 242.0];
-    CityData { outposts, safe_pos, drone_routes, vehicles, loot_spots, streets }
+    CityData { outposts, safe_pos, drone_routes, vehicles, loot_spots, streets, stations }
 }
 
 /// Barrios exteriores: un anillo de manzanas alrededor del Distrito Sur con cuatro temas,
 /// campamentos enemigos, una segunda autopista, más autos y el muro y horizonte nuevos.
-fn outer(b: &mut B, vehicles: &mut Vec<(Vec3, f32, u8)>, outposts: &mut Vec<Outpost>) {
+fn outer(b: &mut B, vehicles: &mut Vec<(Vec3, f32, u8)>, outposts: &mut Vec<Outpost>, stations: &mut Vec<city2::Station>) {
     use std::f32::consts::{FRAC_PI_2, PI};
     let a = b.w.a;
     b.r = Rng::new(SEED_OUTER);
@@ -1121,7 +1127,7 @@ fn outer(b: &mut B, vehicles: &mut Vec<(Vec3, f32, u8)>, outposts: &mut Vec<Outp
     let camps: [(f32, f32, &str, &[char]); 6] = [
         (-220.0, -264.0, "Campamento del Puerto", &['s', 'e']),
         (176.0, -220.0, "Campamento de los Silos", &['w', 's']),
-        (264.0, 44.0, "Campamento Financiero", &['w', 'n']),
+        (264.0, 220.0, "Campamento del Este", &['w', 'n']),
         (88.0, 264.0, "Campamento del Parque", &['n', 'w']),
         (-176.0, 220.0, "Campamento Jardín", &['n', 'e']),
         (-264.0, -44.0, "Campamento del Cerro", &['e', 's']),
@@ -1153,6 +1159,9 @@ fn outer(b: &mut B, vehicles: &mut Vec<(Vec3, f32, u8)>, outposts: &mut Vec<Outp
         op.turret(cx + 12.0, cz + 12.0, -PI * 0.25);
         outposts.push(op);
     }
+    // Ciudad 2.0: plaza, bulevar, diagonal, rotondas y subte ocupan sus manzanas
+    used.extend(city2::reserved().blocks);
+    stations.extend(city2::build(b));
     // manzanas por barrio
     for bx in BC_ALL {
         for bz in BC_ALL {
@@ -1174,8 +1183,13 @@ fn outer(b: &mut B, vehicles: &mut Vec<(Vec3, f32, u8)>, outposts: &mut Vec<Outp
                 }
             } else if bz > CORE_A {
                 // Barrio Jardín: casas bajas, patios y parques
+                let k = ((bx * 7.0 + bz * 3.0).abs() as u32) % 17;
+                b.street_stall(bx + 9.0, bz + 14.2, k);
                 match (r * 6.0) as u32 {
-                    0 | 1 => b.block_apts(bx, bz, false, true),
+                    0 | 1 => {
+                        b.block_apts(bx, bz, false, true);
+                        b.storefront(bx - 6.0, bz - 5.0, 14.0, 12.0, k);
+                    }
                     2 => b.block_courtyard(bx, bz),
                     3 => b.block_park(bx, bz),
                     4 => b.block_plaza(bx, bz),
@@ -1192,10 +1206,15 @@ fn outer(b: &mut B, vehicles: &mut Vec<(Vec3, f32, u8)>, outposts: &mut Vec<Outp
                 }
             } else {
                 // El Cerro: terrazas, mercados, departamentos y estacionamientos
+                let k = ((bx * 5.0 + bz * 11.0).abs() as u32) % 13;
                 match (r * 6.0) as u32 {
                     0 => b.block_terrace_park(bx, bz),
                     1 => b.block_market(bx, bz),
-                    2 | 3 => b.block_apts(bx, bz, true, true),
+                    2 | 3 => {
+                        b.block_apts(bx, bz, true, true);
+                        b.storefront(bx - 6.0, bz - 5.0, 14.0, 12.0, k);
+                        b.street_stall(bx - 9.0, bz + 14.2, k + 1);
+                    }
                     4 => b.block_lot(bx, bz),
                     _ => b.block_park(bx, bz),
                 }
@@ -1239,6 +1258,12 @@ mod tests {
         let c = l.city.unwrap();
         assert_eq!(c.outposts.iter().filter(|o| !o.camp).count(), 7);
         assert_eq!(c.outposts.iter().filter(|o| o.camp).count(), 6);
+        assert_eq!(c.stations.len(), 3);
+        // del andén se puede caminar: hay piso a la profundidad de la estación
+        for st in &c.stations {
+            let g = l.world.ground_at(st.platform.x, st.platform.z, st.platform.y + 0.2);
+            assert!((g - st.platform.y).abs() < 0.05, "{}: piso {g}", st.name);
+        }
         assert!(c.outposts.iter().all(|o| !o.patrol.is_empty() && !o.units.is_empty()));
         assert_eq!(c.outposts.iter().filter(|o| o.obj_pos.is_none() && !o.camp).count(), 1); // el mando
         // se reaparece corrido 1,5 m de la caja de reabastecimiento, sobre la vereda

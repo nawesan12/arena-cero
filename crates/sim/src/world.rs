@@ -23,6 +23,30 @@ pub struct VisualBox {
     pub size: Vec3,
     pub mat: Mat,
     pub shadow: bool,
+    /// Giro sobre Y (0 en casi todo; las calles diagonales y curvas lo usan).
+    pub yaw: f32,
+}
+
+/// Marco local de un colisionador girado: centro en XZ, seno y coseno del giro y la caja sin girar.
+#[derive(Clone, Copy, Debug)]
+struct Frame {
+    cx: f32,
+    cz: f32,
+    c: f32,
+    s: f32,
+    local: Aabb,
+}
+
+impl Frame {
+    /// Punto del mundo al marco local (el centro queda en el mismo lugar).
+    fn to_local(&self, x: f32, z: f32) -> (f32, f32) {
+        let (dx, dz) = (x - self.cx, z - self.cz);
+        (self.cx + dx * self.c - dz * self.s, self.cz + dx * self.s + dz * self.c)
+    }
+    /// Desplazamiento local al mundo.
+    fn delta_to_world(&self, dx: f32, dz: f32) -> (f32, f32) {
+        (dx * self.c + dz * self.s, -dx * self.s + dz * self.c)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,6 +97,10 @@ pub struct World {
     /// Medio lado del mapa: el muro está en ±a.
     pub a: f32,
     boxes: Vec<Option<Aabb>>,
+    /// Marco girado de cada caja (None: alineada a los ejes).
+    frames: Vec<Option<Frame>>,
+    /// Huecos en el piso (entradas al subte): ahí no hay plano en y = 0.
+    pub holes: Vec<[f32; 4]>,
     /// Rango de celdas de cada caja, para no repetirla en las consultas.
     ranges: Vec<[i32; 4]>,
     cells: Vec<Vec<ColliderId>>,
@@ -95,6 +123,8 @@ impl World {
         Self {
             a,
             boxes: Vec::new(),
+            frames: Vec::new(),
+            holes: Vec::new(),
             ranges: Vec::new(),
             cells: vec![Vec::new(); (n * n) as usize],
             n,
@@ -145,8 +175,53 @@ impl World {
             }
         }
         self.boxes.push(Some(b));
+        self.frames.push(None);
         self.ranges.push(r);
         id
+    }
+
+    /// Colisionador girado `yaw` sobre Y (caja de w × h × d con centro en x, z y base en y0).
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_obb(&mut self, x: f32, z: f32, w: f32, h: f32, d: f32, y0: f32, yaw: f32) -> ColliderId {
+        let (s, c) = yaw.sin_cos();
+        if s.abs() < 1e-4 {
+            return self.add_collider(x, z, w, h, d, y0);
+        }
+        // caja envolvente para la grilla
+        let (bw, bd) = (w * c.abs() + d * s.abs(), w * s.abs() + d * c.abs());
+        let id = self.add_collider(x, z, bw, h, bd, y0);
+        let local = Aabb { min: Vec3::new(x - w / 2.0, y0, z - d / 2.0), max: Vec3::new(x + w / 2.0, y0 + h, z + d / 2.0) };
+        self.frames[id as usize] = Some(Frame { cx: x, cz: z, c, s, local });
+        id
+    }
+
+    /// Caja visual girada con colisión, apoyada en `y0`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_block_rot(&mut self, x: f32, y0: f32, z: f32, w: f32, h: f32, d: f32, yaw: f32, mat: Mat) -> ColliderId {
+        self.visuals.push(VisualBox { center: Vec3::new(x, y0 + h / 2.0, z), size: Vec3::new(w, h, d), mat, shadow: true, yaw });
+        self.add_obb(x, z, w, h, d, y0, yaw)
+    }
+
+    /// Caja visual girada sin colisión.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_visual_rot(&mut self, x: f32, y: f32, z: f32, w: f32, h: f32, d: f32, yaw: f32, mat: Mat, shadow: bool) {
+        self.visuals.push(VisualBox { center: Vec3::new(x, y, z), size: Vec3::new(w, h, d), mat, shadow, yaw });
+    }
+
+    /// ¿(x, z) cae en un hueco del piso?
+    pub fn in_hole(&self, x: f32, z: f32) -> bool {
+        self.holes.iter().any(|h| x > h[0] && x < h[2] && z > h[1] && z < h[3])
+    }
+
+    /// Caja de un colisionador en su marco local y el punto llevado a ese marco.
+    fn local(&self, id: ColliderId, b: &Aabb, x: f32, z: f32) -> (Aabb, f32, f32, Option<Frame>) {
+        match self.frames[id as usize] {
+            Some(f) => {
+                let (lx, lz) = f.to_local(x, z);
+                (f.local, lx, lz, Some(f))
+            }
+            None => (*b, x, z, None),
+        }
     }
 
     pub fn remove_collider(&mut self, id: ColliderId) {
@@ -165,7 +240,7 @@ impl World {
 
     #[allow(clippy::too_many_arguments)]
     pub fn add_visual(&mut self, x: f32, y: f32, z: f32, w: f32, h: f32, d: f32, mat: Mat, shadow: bool) {
-        self.visuals.push(VisualBox { center: Vec3::new(x, y, z), size: Vec3::new(w, h, d), mat, shadow });
+        self.visuals.push(VisualBox { center: Vec3::new(x, y, z), size: Vec3::new(w, h, d), mat, shadow, yaw: 0.0 });
     }
 
     /// Caja apoyada en el piso, con colisión.
@@ -236,8 +311,12 @@ impl World {
 
     /* ---------- consultas ---------- */
 
-    /// Recorre una vez cada caja que toca el rectángulo XZ.
+    /// Recorre una vez cada caja que toca el rectángulo XZ (caja envolvente, sin girar).
     pub fn query(&self, min_x: f32, min_z: f32, max_x: f32, max_z: f32, mut f: impl FnMut(&Aabb)) {
+        self.query_id(min_x, min_z, max_x, max_z, |_, b| f(b));
+    }
+
+    fn query_id(&self, min_x: f32, min_z: f32, max_x: f32, max_z: f32, mut f: impl FnMut(ColliderId, &Aabb)) {
         let (qx0, qz0, qx1, qz1) = (self.cell_ix(min_x), self.cell_ix(min_z), self.cell_ix(max_x), self.cell_ix(max_z));
         for ix in qx0..=qx1 {
             for iz in qz0..=qz1 {
@@ -248,7 +327,7 @@ impl World {
                         continue;
                     }
                     if let Some(b) = &self.boxes[id as usize] {
-                        f(b);
+                        f(id, b);
                     }
                 }
             }
@@ -258,44 +337,51 @@ impl World {
     /// Empuja un cilindro vertical (pies a `feet`, alto `height`) fuera de las cajas.
     pub fn collide_xz(&self, p: &mut Vec3, r: f32, feet: f32, height: f32) {
         let mut q = *p;
-        self.query(p.x - r, p.z - r, p.x + r, p.z + r, |b| {
+        self.query_id(p.x - r, p.z - r, p.x + r, p.z + r, |id, bb| {
+            let (b, lx, lz, frame) = self.local(id, bb, q.x, q.z);
             if feet >= b.max.y - 0.35 || feet + height <= b.min.y {
                 return;
             }
-            let cx = q.x.clamp(b.min.x, b.max.x);
-            let cz = q.z.clamp(b.min.z, b.max.z);
-            let (dx, dz) = (q.x - cx, q.z - cz);
+            let cx = lx.clamp(b.min.x, b.max.x);
+            let cz = lz.clamp(b.min.z, b.max.z);
+            let (dx, dz) = (lx - cx, lz - cz);
             let d2 = dx * dx + dz * dz;
             if d2 >= r * r {
                 return;
             }
+            let (mut mx, mut mz) = (0.0, 0.0);
             if d2 > 1e-8 {
                 let d = d2.sqrt();
                 let k = (r - d) / d;
-                q.x += dx * k;
-                q.z += dz * k;
+                mx = dx * k;
+                mz = dz * k;
             } else {
-                let (ox0, ox1) = (b.min.x - r - q.x, b.max.x + r - q.x);
-                let (oz0, oz1) = (b.min.z - r - q.z, b.max.z + r - q.z);
-                let mx = if ox0.abs() < ox1.abs() { ox0 } else { ox1 };
-                let mz = if oz0.abs() < oz1.abs() { oz0 } else { oz1 };
-                if mx.abs() < mz.abs() {
-                    q.x += mx;
+                let (ox0, ox1) = (b.min.x - r - lx, b.max.x + r - lx);
+                let (oz0, oz1) = (b.min.z - r - lz, b.max.z + r - lz);
+                let px = if ox0.abs() < ox1.abs() { ox0 } else { ox1 };
+                let pz = if oz0.abs() < oz1.abs() { oz0 } else { oz1 };
+                if px.abs() < pz.abs() {
+                    mx = px;
                 } else {
-                    q.z += mz;
+                    mz = pz;
                 }
             }
+            let (wx, wz) = frame.map_or((mx, mz), |f| f.delta_to_world(mx, mz));
+            q.x += wx;
+            q.z += wz;
         });
         p.x = q.x;
         p.z = q.z;
     }
 
     /// Altura del piso bajo (x, z) para unos pies a `feet` (sube escalones de hasta 0,36 m).
+    /// El plano y = 0 cuenta salvo en los huecos del subte y si los pies están muy por debajo.
     pub fn ground_at(&self, x: f32, z: f32, feet: f32) -> f32 {
         let e = R * 0.5;
-        let mut g = 0.0f32;
-        self.query(x - e, z - e, x + e, z + e, |b| {
-            if x > b.min.x - e && x < b.max.x + e && z > b.min.z - e && z < b.max.z + e && feet >= b.max.y - 0.36 && b.max.y > g {
+        let mut g = if feet >= -0.36 && !self.in_hole(x, z) { 0.0f32 } else { -1000.0 };
+        self.query_id(x - e, z - e, x + e, z + e, |id, bb| {
+            let (b, lx, lz, _) = self.local(id, bb, x, z);
+            if lx > b.min.x - e && lx < b.max.x + e && lz > b.min.z - e && lz < b.max.z + e && feet >= b.max.y - 0.36 && b.max.y > g {
                 g = b.max.y;
             }
         });
@@ -306,14 +392,19 @@ impl World {
     pub fn ceiling_at(&self, x: f32, z: f32, head_old: f32, head_new: f32) -> Option<f32> {
         let e = R * 0.7;
         let mut c: Option<f32> = None;
-        self.query(x - e, z - e, x + e, z + e, |b| {
-            if b.min.y > 0.05
+        // bajo tierra, el piso de la calle es techo (salvo en los huecos)
+        if head_old < 0.0 && head_new >= 0.0 && !self.in_hole(x, z) {
+            c = Some(0.0);
+        }
+        self.query_id(x - e, z - e, x + e, z + e, |id, bb| {
+            let (b, lx, lz, _) = self.local(id, bb, x, z);
+            if b.min.y.abs() > 0.05
                 && b.min.y >= head_old - 0.02
                 && b.min.y < head_new
-                && x > b.min.x - e
-                && x < b.max.x + e
-                && z > b.min.z - e
-                && z < b.max.z + e
+                && lx > b.min.x - e
+                && lx < b.max.x + e
+                && lz > b.min.z - e
+                && lz < b.max.z + e
                 && c.is_none_or(|c| b.min.y < c)
             {
                 c = Some(b.min.y);
@@ -322,12 +413,13 @@ impl World {
         c
     }
 
-    /// Caja que contiene el punto, si hay.
+    /// Caja que contiene el punto, si hay (para giradas devuelve la envolvente).
     pub fn box_at(&self, p: Vec3) -> Option<Aabb> {
         let mut hit = None;
-        self.query(p.x, p.z, p.x, p.z, |b| {
-            if hit.is_none() && p.x > b.min.x && p.x < b.max.x && p.z > b.min.z && p.z < b.max.z && p.y < b.max.y && p.y > b.min.y {
-                hit = Some(*b);
+        self.query_id(p.x, p.z, p.x, p.z, |id, bb| {
+            let (b, lx, lz, _) = self.local(id, bb, p.x, p.z);
+            if hit.is_none() && lx > b.min.x && lx < b.max.x && lz > b.min.z && lz < b.max.z && p.y < b.max.y && p.y > b.min.y {
+                hit = Some(*bb);
             }
         });
         hit
@@ -336,9 +428,10 @@ impl World {
     /// Rayo contra el mundo (cajas y piso). Devuelve la distancia al primer impacto o `far`.
     pub fn ray(&self, o: Vec3, d: Vec3, far: f32) -> f32 {
         let mut best = far;
-        if d.y < -1e-6 {
+        if d.y.abs() > 1e-6 {
+            // el plano de la calle tapa en los dos sentidos (desde abajo, salvo los huecos del subte)
             let t = -o.y / d.y;
-            if t >= 0.0 && t < best {
+            if t >= 0.0 && t < best && !self.in_hole(o.x + d.x * t, o.z + d.z * t) {
                 best = t;
             }
         }
@@ -362,7 +455,15 @@ impl World {
                 }
                 for &id in self.cell(ix, iz) {
                     if let Some(b) = &self.boxes[id as usize] {
-                        if let Some(h) = ray_aabb(o, d, b, best) {
+                        let h = match self.frames[id as usize] {
+                            Some(f) => {
+                                let (lx, lz) = f.to_local(o.x, o.z);
+                                let ld = Vec3::new(d.x * f.c - d.z * f.s, d.y, d.x * f.s + d.z * f.c);
+                                ray_aabb(Vec3::new(lx, o.y, lz), ld, &f.local, best)
+                            }
+                            None => ray_aabb(o, d, b, best),
+                        };
+                        if let Some(h) = h {
                             if h < best {
                                 best = h;
                             }
@@ -454,6 +555,36 @@ mod tests {
         // hacia abajo pega en el piso
         let t = w.ray(Vec3::new(30.0, 5.0, 30.0), Vec3::NEG_Y, 100.0);
         assert!((t - 5.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn caja_girada_choca_y_sostiene() {
+        let mut w = World::new(60.0);
+        // pared de 10 × 1 girada 45°
+        w.add_block_rot(0.0, 0.0, 0.0, 10.0, 3.0, 1.0, std::f32::consts::FRAC_PI_4, Mat::Wall);
+        // un punto en la diagonal libre de la envolvente no choca
+        let mut p = Vec3::new(3.0, 1.0, 3.0);
+        w.collide_xz(&mut p, 0.4, 0.0, 1.8);
+        assert!((p - Vec3::new(3.0, 1.0, 3.0)).length() < 1e-4, "{p:?}");
+        // sobre la pared se puede parar
+        assert!((w.ground_at(2.0, -2.0, 3.0) - 3.0).abs() < 1e-4);
+        // un rayo de frente pega a la distancia correcta (media diagonal de 0,5 m)
+        let dir = Vec3::new(1.0, 0.0, 1.0).normalize();
+        let t = w.ray(Vec3::new(-5.0, 1.0, -5.0), dir, 50.0);
+        assert!((t - (50.0f32.sqrt() - 0.5)).abs() < 0.05, "t = {t}");
+    }
+
+    #[test]
+    fn hueco_del_subte() {
+        let mut w = World::new(60.0);
+        w.holes.push([-2.0, -4.0, 2.0, 4.0]);
+        w.add_block(0.0, -6.5, 10.0, 10.0, 0.5, 30.0, Mat::Concrete); // piso de la estación
+        assert_eq!(w.ground_at(10.0, 10.0, 0.0), 0.0);
+        assert!(w.ground_at(0.0, 0.0, 0.0) < -100.0 || (w.ground_at(0.0, 0.0, 0.0) + 6.0).abs() < 1e-4);
+        // abajo, el piso es el de la estación
+        assert!((w.ground_at(0.0, 10.0, -6.0) + 6.0).abs() < 1e-4);
+        // desde abajo no se ve la calle
+        assert!(!w.has_los(Vec3::new(0.0, -5.0, 10.0), Vec3::new(0.0, 2.0, 20.0)));
     }
 
     #[test]

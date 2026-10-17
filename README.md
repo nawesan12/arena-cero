@@ -31,3 +31,9 @@ Tab mapa, F1-F3 calidad, F4 FPS, M música, Esc pausa.
 - `referencia-web/`: la versión web original, que es la especificación del port.
 
 Más detalle en [`CLAUDE.md`](CLAUDE.md).
+
+## Documentación
+
+- [Jugabilidad](docs/JUGABILIDAD.md): controles, modos, armas, enemigos, ciudad, economía, subte, calidad.
+- [Arquitectura](docs/ARQUITECTURA.md): cómo está hecho, módulo por módulo, rendimiento y herramientas.
+- [Historial](docs/HISTORIAL.md): etapas del port y diferencias con la web.

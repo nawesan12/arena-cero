@@ -46,6 +46,12 @@ struct MeshBuf {
 
 impl MeshBuf {
     fn push_box(&mut self, center: SVec3, size: SVec3, wuv: Option<f32>) {
+        self.push_box_rot(center, size, 0.0, wuv);
+    }
+
+    /// Caja girada `yaw` sobre Y. La textura en metros se calcula sin girar (sigue a la caja).
+    fn push_box_rot(&mut self, center: SVec3, size: SVec3, yaw: f32, wuv: Option<f32>) {
+        let rot = Quat::from_rotation_y(yaw);
         let h = size * 0.5;
         // (normal, u, v) con u × v = normal: los vértices quedan antihorarios vistos desde afuera
         const FACES: [([f32; 3], [f32; 3], [f32; 3]); 6] = [
@@ -61,8 +67,9 @@ impl MeshBuf {
             let base = self.pos.len() as u32;
             for (su, sv, tu, tv) in [(-1.0, -1.0, 0.0, 1.0), (1.0, -1.0, 1.0, 1.0), (1.0, 1.0, 1.0, 0.0), (-1.0, 1.0, 0.0, 0.0)] {
                 let p = center + n * (n.abs().dot(h)) + u * su * u.abs().dot(h) + v * sv * v.abs().dot(h);
-                self.pos.push(p.to_array());
-                self.nor.push(n.to_array());
+                let world = center + rot * (p - center);
+                self.pos.push(world.to_array());
+                self.nor.push((rot * n).to_array());
                 self.uv.push(match wuv {
                     // UV en metros: las fachadas repiten la textura por piso sin estirarse
                     Some(m) if n.x.abs() > 0.5 => [p.z / m, -p.y / m],
@@ -113,6 +120,31 @@ fn sky_mesh(r: f32) -> Mesh {
     b.into_mesh()
 }
 
+/// Piso en baldosas de 8 m que dejan abiertas las que tocan un hueco (bocas de subte).
+/// Las UV son las de un plano único de 2a × 2a, para que la textura no cambie.
+fn floor_mesh(a: f32, holes: &[[f32; 4]]) -> Mesh {
+    let mut b = MeshBuf::default();
+    let t = 8.0;
+    let n = (a * 2.0 / t).ceil() as i32;
+    for iz in 0..n {
+        for ix in 0..n {
+            let (x0, z0) = (-a + ix as f32 * t, -a + iz as f32 * t);
+            let (x1, z1) = ((x0 + t).min(a), (z0 + t).min(a));
+            if holes.iter().any(|h| x0 < h[2] && x1 > h[0] && z0 < h[3] && z1 > h[1]) {
+                continue;
+            }
+            let base = b.pos.len() as u32;
+            for (x, z) in [(x0, z0), (x0, z1), (x1, z1), (x1, z0)] {
+                b.pos.push([x, 0.0, z]);
+                b.nor.push([0.0, 1.0, 0.0]);
+                b.uv.push([(x + a) / (2.0 * a), (z + a) / (2.0 * a)]);
+            }
+            b.idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+    }
+    b.into_mesh()
+}
+
 pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mut Assets<StandardMaterial>, looks: &mut Looks, level: &Level) {
     let w = &level.world;
     let info = &level.info;
@@ -123,7 +155,7 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
     for vb in &w.visuals {
         let key = (vb.mat, vb.shadow, (vb.center.x / CHUNK).floor() as i32, (vb.center.z / CHUNK).floor() as i32);
         let wuv = looks.get(vb.mat, mats).wuv;
-        batches.entry(key).or_default().push_box(vb.center, vb.size, wuv);
+        batches.entry(key).or_default().push_box_rot(vb.center, vb.size, vb.yaw, wuv);
     }
     for ((m, shadow, _, _), buf) in batches {
         let look = looks.get(m, mats).mat.clone();
@@ -196,7 +228,7 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
 
     // piso
     let floor = looks.floor(info.floor_tex, info.floor, a, mats);
-    commands.spawn((Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(a)).mesh())), MeshMaterial3d(floor), Transform::IDENTITY, NotShadowCaster, LevelEntity));
+    commands.spawn((Mesh3d(meshes.add(floor_mesh(a, &w.holes))), MeshMaterial3d(floor), Transform::IDENTITY, NotShadowCaster, LevelEntity));
 
     // cielo y sol
     let sun_dir = level.sun_pos().normalize();
