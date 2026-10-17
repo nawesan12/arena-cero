@@ -34,7 +34,7 @@ impl Plugin for HudPlugin {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
             .insert_resource(ShowFps(crate::config::get("fps").is_some_and(|v| v == "1")))
             .add_systems(Startup, spawn_hud)
-            .add_systems(Update, (tick_feed, vitals, weapon, top, compass, crosshair, overlays, numbers, pause_screen, fps));
+            .add_systems(Update, (tick_feed, vitals, weapon, top, compass, crosshair, overlays, numbers, pause_screen, fps, hook_ring));
     }
 }
 
@@ -84,6 +84,8 @@ struct Slots;
 struct CrossBar(usize);
 #[derive(Component)]
 struct CrossDot;
+#[derive(Component)]
+struct HookRing;
 #[derive(Component)]
 struct HitRoot;
 #[derive(Component)]
@@ -212,6 +214,8 @@ fn spawn_hud(mut commands: Commands, mut font_assets: ResMut<Assets<Font>>, mut 
             p.spawn((Node { position_type: PositionType::Absolute, width: px(w), height: px(h), ..default() }, BackgroundColor(INK.with_alpha(0.92)), Outline { width: px(1), offset: px(0), color: Color::BLACK.with_alpha(0.35) }, CrossBar(i)));
         }
         p.spawn((Node { position_type: PositionType::Absolute, left: px(-1), top: px(-1), width: px(2), height: px(2), ..default() }, BackgroundColor(AMBER), CrossDot));
+        // anillo cian: lo apuntado se puede enganchar
+        p.spawn((Node { position_type: PositionType::Absolute, left: px(-20), top: px(-20), width: px(40), height: px(40), border: UiRect::all(px(1)), border_radius: BorderRadius::MAX, ..default() }, BorderColor::all(CYAN.with_alpha(0.6)), Visibility::Hidden, HookRing));
     });
     commands.spawn((center, UiTransform::default(), Visibility::Hidden, HitRoot)).with_children(|p| {
         for (a, x, y) in [(-45.0f32, 1.0, 1.0), (-45.0, -1.0, -1.0), (45.0, 1.0, -1.0), (45.0, -1.0, 1.0)] {
@@ -798,5 +802,13 @@ fn fps(key: Res<ButtonInput<KeyCode>>, mut show: ResMut<ShowFps>, diag: Res<Diag
         if *k == T::Fps {
             set(&mut t, v.clone());
         }
+    }
+}
+
+fn hook_ring(hk: Res<crate::hook_view::Hookable>, mut q: Query<(&mut Visibility, &mut BorderColor, &mut Node), With<HookRing>>) {
+    for (mut v, mut b, mut n) in &mut q {
+        *v = if hk.can || hk.hooked { Visibility::Inherited } else { Visibility::Hidden };
+        *b = BorderColor::all(CYAN.with_alpha(if hk.hooked { 1.0 } else { 0.6 }));
+        n.border = UiRect::all(px(if hk.hooked { 2.0 } else { 1.0 }));
     }
 }

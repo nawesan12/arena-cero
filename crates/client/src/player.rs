@@ -31,7 +31,7 @@ impl Plugin for PlayerPlugin {
             .init_resource::<Look>()
             .init_resource::<Latch>()
             .init_resource::<Settings>()
-            .add_systems(Update, (grab_cursor, mouse_look, latch_input).chain())
+            .add_systems(Update, (grab_cursor, mouse_look, latch_input, test_hook).chain())
             .add_systems(FixedUpdate, step_player)
             .add_systems(PostUpdate, place_camera.before(TransformSystems::Propagate));
     }
@@ -493,5 +493,14 @@ fn place_camera(time: Res<Time>, fixed: Res<Time<Fixed>>, mut look: ResMut<Look>
     t.rotation = Quat::from_euler(EulerRot::YXZ, look.yaw + jitter(1.3), look.pitch + jitter(7.1), roll);
     if let Projection::Perspective(p) = &mut *proj {
         p.fov = look.fov.to_radians();
+    }
+}
+
+/// Con `ARENA_HOOK=segundos`: dispara el gancho en ese momento (para capturas de prueba).
+fn test_hook(time: Res<Time<Real>>, mut latch: ResMut<Latch>, mut done: Local<bool>) {
+    let at: f32 = std::env::var("ARENA_HOOK").ok().and_then(|v| v.parse().ok()).unwrap_or(f32::MAX);
+    if !*done && time.elapsed_secs() > at {
+        *done = true;
+        latch.hook = true;
     }
 }
