@@ -3,6 +3,8 @@
 //! Uso: `arena-cero [--map ciudad|deposito|fundicion|cantera|azotea] [--at x,z,yaw,pitch] [--weapon 1-4] [--shot archivo.png]`
 //! `--shot` saca una captura a los pocos segundos y cierra (sirve para revisar cambios sin jugar).
 
+mod audio;
+mod config;
 mod fx;
 mod gun;
 mod gunmodels;
@@ -63,7 +65,7 @@ fn main() {
             ..default()
         }))
         .insert_resource(args)
-        .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin, gun::GunPlugin, fx::FxPlugin))
+        .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin, gun::GunPlugin, fx::FxPlugin, audio::AudioSynthPlugin))
         .add_systems(PreStartup, setup)
         .add_systems(Update, (world_render::follow_sky, world_render::animate_lava, auto_shot))
         .run();

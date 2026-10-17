@@ -1,6 +1,7 @@
 //! Jugador local: junta el input cada cuadro, corre la simulación a paso fijo (60 Hz) e
 //! interpola la cámara entre pasos. El mismo esquema sirve después para predecir contra el servidor.
 
+use crate::audio::{S, Sounds};
 use crate::fx::Fx;
 use crate::gun::GunRig;
 use crate::world_render::LevelRes;
@@ -86,6 +87,8 @@ pub struct LocalPlayer {
     pub dmg_dir: f32,
     pub dmg_t: f32,
     pub start: Vec3,
+    /// Golpes recibidos desde el último paso (para el sonido).
+    pub hurt_count: u32,
 }
 
 impl LocalPlayer {
@@ -95,6 +98,7 @@ impl LocalPlayer {
         }
         self.hp = (self.hp - d).max(0.0);
         self.last_hurt = 0.0;
+        self.hurt_count += 1;
         self.hurt_flash = (self.hurt_flash + 0.55).min(1.0);
         self.state.shake = (self.state.shake + 0.25).min(1.0);
         if let Some(f) = from {
@@ -143,6 +147,7 @@ pub fn spawn_player(commands: &mut Commands, level: &LevelRes, start: Option<[f3
         hurt_flash: 0.0,
         dmg_dir: 0.0,
         dmg_t: 0.0,
+        hurt_count: 0,
     });
     let fog_end = info.fog[1].min(350.0);
     commands.spawn((
@@ -219,6 +224,7 @@ fn step_player(
     mut lp: ResMut<LocalPlayer>,
     mut rig: ResMut<GunRig>,
     mut fx: ResMut<Fx>,
+    mut snd: ResMut<Sounds>,
 ) {
     let playing = cursor.grab_mode != CursorGrabMode::None;
     let axis = |pos: KeyCode, neg: KeyCode| if playing { f32::from(u8::from(key.pressed(pos))) - f32::from(u8::from(key.pressed(neg))) } else { 0.0 };
@@ -244,6 +250,7 @@ fn step_player(
     let world = &level.0.world;
     let lp = &mut *lp;
     lp.prev = lp.state.eye();
+    let aim_before = lp.state.aim_t;
     let mut pev = std::mem::take(&mut lp.events);
     pev.clear();
     lp.state.step(&input, world, TICK, &mut pev);
@@ -253,8 +260,17 @@ fn step_player(
                 lp.hurt(f32::from(d), None);
                 fx.burst(Vec3::new(lp.state.pos.x, 0.1, lp.state.pos.z), 0xff8030, 2, 3.0, 0.4);
             }
-            PlayerEvent::Dash => fx.burst(lp.state.pos - Vec3::Y, 0x5fd8ff, 18, 3.0, 0.35),
-            PlayerEvent::DoubleJump | PlayerEvent::HookBoost => fx.burst(lp.state.pos - Vec3::Y * EYE, 0x5fd8ff, 16, 4.0, 0.4),
+            PlayerEvent::Dash => {
+                fx.burst(lp.state.pos - Vec3::Y, 0x5fd8ff, 18, 3.0, 0.35);
+                snd.play(S::Dash);
+            }
+            PlayerEvent::DoubleJump | PlayerEvent::HookBoost => {
+                fx.burst(lp.state.pos - Vec3::Y * EYE, 0x5fd8ff, 16, 4.0, 0.4);
+                snd.play(S::DJump);
+            }
+            PlayerEvent::Slide => snd.play(S::Slide),
+            PlayerEvent::HookFired => snd.play(S::Hook),
+            PlayerEvent::HookMiss => snd.play(S::HookMiss),
             _ => {}
         }
     }
@@ -262,6 +278,9 @@ fn step_player(
         fx.burst(Vec3::new(lp.state.pos.x, 0.05, lp.state.pos.z), 0x3a4246, 1, 2.0, 0.4);
     }
     lp.events = pev;
+    if aim_before < 0.5 && lp.state.aim_t >= 0.5 {
+        snd.play(S::Aim);
+    }
 
     // armas
     let mut wev = Vec::new();
@@ -276,6 +295,7 @@ fn step_player(
             WeaponEvent::Fire { weapon, pellets, pierce, .. } => {
                 // el destello dura casi todo el cuadro de disparo (en la web, hasta rate − 0,04)
                 rig.flash_t = (WEAPONS[weapon].rate - 0.04).min(0.06);
+                snd.play(S::Shot(weapon.min(2) as u8));
                 let color = if pierce { 0x5fd8ff } else { 0xffc66a };
                 for (k, p) in pellets.iter().enumerate() {
                     let t = world.ray(p.origin, p.dir, 120.0);
@@ -290,6 +310,7 @@ fn step_player(
             }
             WeaponEvent::Launch { .. } => {
                 rig.flash_t = 0.06;
+                snd.play(S::Launch);
                 rig.drum_target += std::f32::consts::PI / 3.0;
             }
             WeaponEvent::Kick { pitch, yaw } => {
@@ -301,6 +322,9 @@ fn step_player(
                 fx.burst(x.pos, 0xff3d5a, if x.big { 24 } else { 12 }, 9.0, 0.6);
                 fx.burst(x.pos, 0x2a2a2a, if x.big { 20 } else { 8 }, 5.0, 1.2);
                 fx.boom(x.pos, x.big);
+                if x.big {
+                    snd.play(S::Boom);
+                }
                 let body = Vec3::new(lp.state.pos.x, lp.state.pos.y - 0.8, lp.state.pos.z);
                 let pd = body.distance(x.pos);
                 lp.state.shake = (lp.state.shake + if x.big { 0.9 } else { 0.4 } * (1.0 - pd / 20.0).max(0.0)).min(1.0);
@@ -308,8 +332,16 @@ fn step_player(
                     lp.hurt((x.self_dmg * (1.0 - pd / x.radius)).round(), Some(x.pos));
                 }
             }
+            WeaponEvent::Toss => snd.play(S::Toss),
+            WeaponEvent::Empty => snd.play(S::Empty),
+            WeaponEvent::Reload => snd.play(S::Reload),
+            WeaponEvent::Swap(_) => snd.play(S::Swap),
+            WeaponEvent::Beep => snd.play(S::Beep),
             _ => {}
         }
+    }
+    for _ in 0..std::mem::take(&mut lp.hurt_count).min(1) {
+        snd.play(S::Hurt);
     }
 
     // vida: regeneración tras 4 s sin daño; al morir, de vuelta al inicio (todavía no hay enemigos)

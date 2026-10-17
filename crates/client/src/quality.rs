@@ -1,6 +1,6 @@
 //! Calidad gráfica (puerto de `QUALITY` en `01-renderer-escena.js`): limita FPS, sombras,
 //! distancia de dibujado y antialias, para que las notebooks no levanten temperatura.
-//! F1 baja · F2 media · F3 alta. Se guarda en `~/.arena-cero` entre sesiones.
+//! F1 baja · F2 media · F3 alta. Se guarda en `~/.arena-cero` entre sesiones (ver `config.rs`).
 
 use crate::player::MainCamera;
 use bevy::light::DirectionalLightShadowMap;
@@ -57,21 +57,12 @@ pub struct QualityRes {
     pub dirty: bool,
 }
 
-fn cfg_path() -> Option<std::path::PathBuf> {
-    std::env::var_os("HOME").map(|h| std::path::Path::new(&h).join(".arena-cero"))
-}
-
 fn load() -> Quality {
-    cfg_path()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| s.lines().find_map(|l| l.strip_prefix("calidad=").and_then(Quality::parse)))
-        .unwrap_or(Quality::Media)
+    crate::config::get("calidad").and_then(|v| Quality::parse(&v)).unwrap_or(Quality::Media)
 }
 
 fn save(q: Quality) {
-    if let Some(p) = cfg_path() {
-        let _ = std::fs::write(p, format!("calidad={}\n", q.name()));
-    }
+    crate::config::set("calidad", q.name());
 }
 
 pub struct QualityPlugin;
