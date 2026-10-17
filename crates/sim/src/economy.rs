@@ -8,6 +8,7 @@ use crate::weapons::{Nade, NadeKind};
 use glam::Vec3;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Gadget {
     Smoke,
     Decoy,
@@ -27,6 +28,7 @@ impl Gadget {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LootKind {
     Credits(u32),
     Ammo,
@@ -35,6 +37,7 @@ pub enum LootKind {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Loot {
     pub id: u32,
     pub pos: Vec3,
@@ -44,6 +47,7 @@ pub struct Loot {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Smoke {
     pub pos: Vec3,
     pub r: f32,
@@ -51,6 +55,7 @@ pub struct Smoke {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Decoy {
     pub pos: Vec3,
     pub life: f32,
@@ -58,6 +63,7 @@ pub struct Decoy {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Scout {
     pub pos: Vec3,
     pub life: f32,

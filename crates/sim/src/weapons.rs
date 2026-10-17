@@ -86,6 +86,7 @@ pub struct Explosion {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Nade {
     pub pos: Vec3,
     pub vel: Vec3,
@@ -102,6 +103,7 @@ pub struct Nade {
 
 /// Qué hace la granada al terminar la mecha.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum NadeKind {
     #[default]
     Frag,

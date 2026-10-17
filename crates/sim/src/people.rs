@@ -7,6 +7,7 @@ use crate::vehicle::{CarAi, Vehicle};
 use glam::{Vec2, Vec3};
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Person {
     pub id: u32,
     pub pos: Vec3,

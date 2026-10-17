@@ -13,6 +13,7 @@ use glam::{Vec2, Vec3};
 pub const SECS_PER_HOUR: f32 = 40.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum MissionKind {
     Convoy,
     Hostage,
@@ -21,6 +22,7 @@ pub enum MissionKind {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mission {
     pub id: u32,
     pub kind: MissionKind,

@@ -1,0 +1,12 @@
+[package]
+name = "arena_server"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "arena-cero-servidor"
+path = "src/main.rs"
+
+[dependencies]
+arena_sim = { path = "../sim", features = ["serde"] }
+arena_net = { path = "../net" }

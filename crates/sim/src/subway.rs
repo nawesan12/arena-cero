@@ -21,6 +21,7 @@ pub const HEIGHT: f32 = 3.9;
 pub const CARS: usize = 3;
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Train {
     pub t: f32,
     col: Option<ColliderId>,

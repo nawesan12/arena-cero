@@ -19,6 +19,7 @@ pub enum Mode {
 
 /// Sonidos que pide la partida (el cliente los traduce a sus efectos).
 #[derive(Clone, Copy, PartialEq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Snd {
     /// Disparo enemigo: distancia (volumen) y de dónde viene (paneo).
     EShot { dist: f32, big: bool, at: Vec3 },
@@ -50,6 +51,7 @@ pub enum Snd {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Mark {
     Hit,
     Crit,
@@ -119,6 +121,7 @@ impl Setup {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Shot {
     pub pos: Vec3,
     pub vel: Vec3,
@@ -129,6 +132,7 @@ pub struct Shot {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Orb {
     pub pos: Vec3,
     pub life: f32,

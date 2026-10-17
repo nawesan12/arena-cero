@@ -25,6 +25,7 @@ pub struct DriveInput {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Vehicle {
     pub id: u32,
     /// Centro del auto a nivel del piso.
@@ -47,6 +48,7 @@ pub struct Vehicle {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum AiMode {
     /// Recorre su ruta por las calles.
     Patrol,
@@ -58,6 +60,7 @@ pub enum AiMode {
 
 /// Piloto enemigo: ruta, modo, tripulación a bordo y lógica para destrabarse.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CarAi {
     pub route: Vec<Vec2>,
     pub idx: usize,

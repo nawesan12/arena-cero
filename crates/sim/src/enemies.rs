@@ -10,6 +10,7 @@ use crate::world::World;
 use glam::{Vec2, Vec3};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DroneKind {
     Normal,
     Heavy,
@@ -18,6 +19,7 @@ pub enum DroneKind {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SoldierKind {
     Rifle,
     Sniper,
@@ -25,6 +27,7 @@ pub enum SoldierKind {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Kind {
     Drone(DroneKind),
     Soldier(SoldierKind),
@@ -33,6 +36,7 @@ pub enum Kind {
 
 /// Estado de alerta de soldados y torretas.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Alert {
     Patrol,
     Search,
@@ -40,6 +44,7 @@ pub enum Alert {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Surv {
     pub route: Vec<[f32; 2]>,
     pub idx: usize,
@@ -47,6 +52,7 @@ pub struct Surv {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Enemy {
     pub id: u32,
     pub kind: Kind,
@@ -485,6 +491,7 @@ pub struct Ctx<'a> {
 
 /// Estado de alerta compartido por puesto.
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OpState {
     pub alarm: f32,
     pub done: bool,
@@ -584,6 +591,7 @@ fn pick_cover(e: &Enemy, ctx: &Ctx, rng: &mut Rng) -> Option<[f32; 2]> {
 
 /// Cadáveres visibles: el juego le pasa la lista para que los soldados los descubran.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Corpse {
     pub id: u32,
     pub pos: Vec3,

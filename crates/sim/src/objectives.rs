@@ -24,6 +24,7 @@ pub enum Interact {
 
 /// Cartel de interacción para la interfaz.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Prompt {
     pub label: String,
     /// Progreso de "mantené F" (0..1), si corresponde.
@@ -31,6 +32,7 @@ pub struct Prompt {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Charge {
     pub op: usize,
     pub t: f32,

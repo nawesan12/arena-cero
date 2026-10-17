@@ -1,0 +1,13 @@
+[package]
+name = "arena_net"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+arena_sim = { path = "../sim", features = ["serde"] }
+glam = { workspace = true, features = ["serde"] }
+renet = "2"
+renet_netcode = "2"
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["alloc"] }
+lz4_flex = "0.11"

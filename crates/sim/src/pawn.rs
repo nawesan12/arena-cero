@@ -61,13 +61,15 @@ pub struct Pawn {
     pub fx: Vec<PlayerEvent>,
     pub wfx: Vec<WeaponEvent>,
     pub kills: u32,
+    /// Marcas de impacto de sus disparos (para su mira, no para la del anfitrión).
+    pub marks: Vec<crate::game::Mark>,
 }
 
 impl Pawn {
     pub fn new(id: u8, name: String, at: Vec3, city: bool) -> Self {
         let mut state = PlayerState::new(at.x, at.z);
         state.pos.y = at.y + EYE;
-        Self { id, name, state, arsenal: Arsenal::new(city), rng: Rng::new(100 + u32::from(id)), hp: 100.0, max_hp: 100.0, last_hurt: 10.0, down: 0.0, input: PawnInput::default(), last: PawnInput::default(), hold: 0.0, use_was: false, fx: Vec::new(), wfx: Vec::new(), kills: 0 }
+        Self { id, name, state, arsenal: Arsenal::new(city), rng: Rng::new(100 + u32::from(id)), hp: 100.0, max_hp: 100.0, last_hurt: 10.0, down: 0.0, input: PawnInput::default(), last: PawnInput::default(), hold: 0.0, use_was: false, fx: Vec::new(), wfx: Vec::new(), kills: 0, marks: Vec::new() }
     }
 
     /// Lo que la IA ve de este jugador.
@@ -179,8 +181,21 @@ impl Game {
             let right = Vec3::new(-p.state.yaw.cos(), 0.0, p.state.yaw.sin());
             let muzzle = eye + dir * 0.6 - right * 0.25 - Vec3::Y * 0.2;
             let kills_before = self.kills;
+            let ev_before = self.events.len();
             self.weapon_events(&wev, crit, muzzle, body, level);
+            // las marcas de impacto son de este jugador: se sacan de los eventos generales
+            let mut mine = Vec::new();
+            let mut k = ev_before;
+            while k < self.events.len() {
+                if let GameEvent::Mark(m) = self.events[k] {
+                    mine.push(m);
+                    self.events.remove(k);
+                } else {
+                    k += 1;
+                }
+            }
             let p = &mut self.pawns[i];
+            p.marks.extend(mine);
             p.kills += self.kills - kills_before;
             p.wfx = wev;
             if tag {
