@@ -158,6 +158,7 @@ fn input(
     mut fade: ResMut<Fade>,
     mut hint: Query<&mut Text, With<Hint>>,
     mut fade_txt: Query<&mut Text, (With<FadeText>, Without<Hint>)>,
+    mut net: ResMut<crate::online::Online>,
 ) {
     let mut msg = String::new();
     if cursor.grab_mode != CursorGrabMode::None && game.0.driving.is_none() {
@@ -189,6 +190,10 @@ fn input(
                     open.0 = false;
                     if i == from {
                         continue;
+                    }
+                    // online siendo cliente: el viaje lo hace el servidor (acá se adelanta)
+                    if let crate::online::Role::Client(r) = &mut net.role {
+                        r.ride(i);
                     }
                     if let Some(p) = game.0.ride_train(&level.0, from, i) {
                         lp.state.pos = p + Vec3::Y * EYE;

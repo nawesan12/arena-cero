@@ -91,6 +91,13 @@ impl NetClient {
         let _ = self.transport.send_packets(&mut self.client);
     }
 
+    /// Pedir el viaje en subte a la estación `to`.
+    pub fn ride(&mut self, to: u8) {
+        if self.client.is_connected() {
+            self.client.send_message(CH_RELIABLE, pack(&ToServer::Ride { to }));
+        }
+    }
+
     pub fn disconnect(&mut self) {
         self.transport.disconnect();
     }

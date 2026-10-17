@@ -44,7 +44,7 @@ fn main() {
     let mut report = Instant::now();
     let mut done_t = 0.0f32;
     loop {
-        host.receive(&mut game, &level);
+        host.receive(&mut game, &mut level);
         if !game.pawns.is_empty() {
             game.step_pawns(&mut level, TICK);
             let ts = game.all_targets(None);

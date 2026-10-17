@@ -83,6 +83,8 @@ impl Mode {
 pub enum ToServer {
     Hello { name: String, version: u64 },
     Input(PawnInput),
+    /// Subirse al subte e ir a la estación indicada.
+    Ride { to: u8 },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -124,6 +126,10 @@ pub struct YouSnap {
     pub marks: Vec<Mark>,
     /// Última secuencia de controles que el servidor aplicó (para corregir la predicción).
     pub ack: u32,
+    /// Auto que manejás (índice en la lista de autos).
+    pub driving: Option<u16>,
+    /// Segundos que llevás mantenida la F en un objetivo.
+    pub hold: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -354,8 +360,24 @@ pub fn apply(game: &mut Game, level: &mut Level, s: Snapshot) {
             level.world.remove_collider(c);
         }
     }
+    // el auto que manejás lo predice el cliente: se acerca de a poco al del servidor
+    let driving = s.you.as_ref().and_then(|y| y.driving).map(usize::from);
+    let mine = driving.and_then(|i| game.driving.filter(|d| *d == i)).and_then(|i| game.vehicles.get(i).cloned());
     game.vehicles = s.vehicles;
-    let driving = game.driving;
+    if let (Some(i), Some(mut local)) = (driving, mine) {
+        if let Some(srv) = game.vehicles.get(i) {
+            if local.pos.distance(srv.pos) < 5.0 {
+                local.pos += (srv.pos - local.pos) * 0.25;
+                let d = (srv.yaw - local.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+                local.yaw += d * 0.25;
+                local.hp = srv.hp;
+                local.wrecked = srv.wrecked;
+                local.col = None;
+                game.vehicles[i] = local;
+            }
+        }
+    }
+    game.driving = driving;
     for (i, v) in game.vehicles.iter_mut().enumerate() {
         v.col = None;
         if !v.wrecked && driving != Some(i) {

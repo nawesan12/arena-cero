@@ -59,6 +59,15 @@ impl Online {
     pub fn is_client(&self) -> bool {
         matches!(self.role, Role::Client(_))
     }
+    /// Nombre de un jugador por número.
+    pub fn name_of(&self, id: u8) -> String {
+        match &self.role {
+            Role::Host(h) => h.names.get(&id).cloned().unwrap_or_else(|| format!("Jugador {id}")),
+            Role::Client(r) => r.net.players.iter().find(|p| p.0 == id).map(|p| p.1.clone()).unwrap_or_else(|| format!("Jugador {id}")),
+            Role::Off => String::new(),
+        }
+    }
+
     /// Cliente caído esperando reaparecer.
     pub fn down(&self) -> bool {
         matches!(&self.role, Role::Client(r) if r.down())
@@ -131,11 +140,13 @@ pub struct Remote {
     /// La partida local ya está armada con el modo del servidor.
     pub ready: bool,
     was_down: bool,
+    /// Pasos sin corregir la posición (después de un viaje en subte, hasta que el servidor lo hace).
+    grace: u32,
 }
 
 impl Remote {
     fn new(net: NetClient, addr: SocketAddr) -> Self {
-        Self { net, addr, seq: 0, hist: VecDeque::new(), sent: PawnInput::default(), you: None, ready: false, was_down: false }
+        Self { net, addr, seq: 0, hist: VecDeque::new(), sent: PawnInput::default(), you: None, ready: false, was_down: false, grace: 0 }
     }
 
     pub fn me(&self) -> u8 {
@@ -144,6 +155,13 @@ impl Remote {
 
     pub fn down(&self) -> bool {
         self.you.as_ref().is_some_and(|y| y.down > 0.0)
+    }
+
+    /// Viaje en subte: lo pide al servidor y se deja de corregir la posición un rato.
+    pub fn ride(&mut self, to: usize) {
+        self.net.ride(to as u8);
+        self.hist.clear();
+        self.grace = 60;
     }
 }
 
@@ -166,11 +184,24 @@ pub fn client_pre(r: &mut Remote, others: &mut Vec<PlayerSnap>, game: &mut Game,
             }
         }
     }
+    r.grace = r.grace.saturating_sub(1);
     let Some(s) = r.net.snapshot.take() else { return };
     *others = s.players.clone();
     let you = s.you.clone();
+    let was_driving = game.driving.is_some();
     apply(game, level, s);
     let Some(you) = you else { return };
+    // cartel de F, calculado acá sobre la copia del mundo
+    let a = arena_sim::objectives::Actor { pos: lp.state.pos, feet: lp.state.feet(), f_held: false };
+    let prompt = game.client_prompt(level, &a, game.driving.is_some(), you.hold);
+    if let Some(run) = game.city.as_mut() {
+        run.obj.prompt = prompt;
+    }
+    if r.grace > 0 {
+        r.hist.clear();
+        r.you = Some(you);
+        return;
+    }
     for m in &you.marks {
         game.events.push(GameEvent::Mark(*m));
     }
@@ -180,7 +211,9 @@ pub fn client_pre(r: &mut Remote, others: &mut Vec<PlayerSnap>, game: &mut Game,
         r.hist.pop_front();
     }
     let err = you.pos - predicted.unwrap_or(lp.state.pos);
-    if err.length() > 3.0 || (predicted.is_none() && err.length() > 0.5) {
+    // al bajarse del auto, directo al costado donde lo dejó el servidor
+    let got_off = was_driving && game.driving.is_none();
+    if got_off || err.length() > 3.0 || (predicted.is_none() && err.length() > 0.5) {
         lp.state.pos = you.pos;
         lp.state.vel = you.vel;
         lp.state.hook = None;
@@ -223,6 +256,7 @@ pub struct Pulses {
     pub fire: bool,
     pub use_held: bool,
     pub light: bool,
+    pub brake: bool,
 }
 
 /// Cliente, después de moverse: manda los controles y guarda la posición predicha.
@@ -254,6 +288,7 @@ pub fn client_send(r: &mut Remote, input: &PlayerInput, p: &Pulses, lp: &LocalPl
     s.fire = p.fire;
     s.use_held = p.use_held;
     s.light = p.light;
+    s.brake = p.brake;
     s.weapon = lp.arsenal.w as u8;
     s.seq = r.seq;
     let inp = *s;

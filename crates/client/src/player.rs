@@ -370,7 +370,7 @@ fn step_player(
     let mut wev = Vec::new();
     let (arsenal, state, rng) = (&mut lp.arsenal, &mut lp.state, &mut lp.rng);
     let winput = if was_driving.is_some() { WeaponInput::default() } else { winput };
-    let pulses = crate::online::Pulses { reload: winput.reload, nade: winput.nade, tag: latch.tag, fire: winput.fire, use_held: playing && key.pressed(KeyCode::KeyF), light: torch.0 };
+    let pulses = crate::online::Pulses { reload: winput.reload, nade: winput.nade, tag: latch.tag, fire: winput.fire, use_held: playing && key.pressed(KeyCode::KeyF), light: torch.0, brake: playing && key.pressed(KeyCode::Space) };
     // en el cliente las granadas y los impactos los resuelve el servidor (acá solo se ven y se oyen)
     let mut own_nades = Vec::new();
     arsenal.step(&winput, state, if client { &mut own_nades } else { &mut game.nades }, rng, TICK, &mut wev);

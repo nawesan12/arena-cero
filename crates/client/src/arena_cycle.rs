@@ -40,8 +40,8 @@ fn cycle(
     net: Res<crate::online::Online>,
 ) {
     let g = &game.0;
-    // online la arena no cambia (los demás tendrían que reconstruir todo a la vez)
-    if g.mode != Mode::Waves || net.active() {
+    // online la arena la cambia el anfitrión; los clientes la siguen (se reabren en el mapa nuevo)
+    if g.mode != Mode::Waves || net.is_client() {
         *pending = None;
         return;
     }

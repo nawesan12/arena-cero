@@ -23,7 +23,7 @@ fn anfitrion_y_cliente_por_udp() {
     let mut start_pos: Option<Vec3> = None;
     let mut snaps = 0;
     while start.elapsed() < Duration::from_secs(6) {
-        host.receive(&mut game, &level);
+        host.receive(&mut game, &mut level);
         game.step_pawns(&mut level, TICK);
         let host_t = arena_sim::enemies::Target { pos: Vec3::new(0.0, 1.76, 20.0), body: Vec3::new(0.0, 1.26, 20.0), vel: Vec3::ZERO, feet: 0.16, crouch_t: 0.0, evasive: false, light: false };
         let ts = game.all_targets(Some(host_t));

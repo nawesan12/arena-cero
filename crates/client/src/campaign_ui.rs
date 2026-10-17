@@ -349,6 +349,7 @@ fn online_glue(args: Res<crate::Args>, mut net: ResMut<Online>, mut open: ResMut
     if map != p.level.0.info.id {
         // otro mapa: se reabre el juego en ese mapa y se vuelve a conectar solo
         let addr = r.addr.to_string();
+        r.net.disconnect();
         relaunch(&["--map", map_arg(map), "--join", &addr], &mut exit);
         return;
     }

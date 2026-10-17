@@ -136,15 +136,9 @@ impl Game {
             self.step_charge(level, a, dt);
             return;
         }
-        let c = level.city.as_ref().unwrap();
-        run.obj.prompt = found.as_ref().map(|i| match i {
-            Interact::Takedown { .. } => Prompt { label: "F · NEUTRALIZAR EN SILENCIO".into(), frac: None },
-            Interact::Objective { op, time } => Prompt { label: format!("MANTENÉ F · {}", c.outposts[*op].task.to_uppercase()), frac: Some((run.obj.hold_t / time).min(1.0)) },
-            Interact::Supply { ready, cd } => Prompt { label: if *ready { "F · REABASTECERSE".into() } else { format!("REABASTECIMIENTO LISTO EN {} S", cd.ceil()) }, frac: None },
-            Interact::Drive { .. } => Prompt { label: "F · MANEJAR".into(), frac: None },
-            Interact::Loot { .. } => Prompt { label: "F · ABRIR LA CAJA".into(), frac: None },
-            Interact::Hostage { mission } => Prompt { label: "MANTENÉ F · LIBERAR AL REHÉN".into(), frac: Some((self.director.missions[*mission].hold / 2.5).min(1.0)) },
-        });
+        let hold = run.obj.hold_t;
+        let prompt = found.as_ref().map(|i| self.prompt_for(level, i, hold));
+        self.city.as_mut().unwrap().obj.prompt = prompt;
         // mantener F para liberar al rehén
         if let Some(Interact::Hostage { mission }) = found {
             if a.f_held {
@@ -233,6 +227,28 @@ impl Game {
         } else {
             self.complete_objective(op, level);
         }
+    }
+
+    /// Cartel de interacción ("F · MANEJAR"...). `hold`: segundos que lleva mantenida la F.
+    fn prompt_for(&self, level: &Level, i: &Interact, hold: f32) -> Prompt {
+        let Some(c) = level.city.as_ref() else { return Prompt { label: String::new(), frac: None } };
+        match i {
+            Interact::Takedown { .. } => Prompt { label: "F · NEUTRALIZAR EN SILENCIO".into(), frac: None },
+            Interact::Objective { op, time } => Prompt { label: format!("MANTENÉ F · {}", c.outposts[*op].task.to_uppercase()), frac: Some((hold / time).min(1.0)) },
+            Interact::Supply { ready, cd } => Prompt { label: if *ready { "F · REABASTECERSE".into() } else { format!("REABASTECIMIENTO LISTO EN {} S", cd.ceil()) }, frac: None },
+            Interact::Drive { .. } => Prompt { label: "F · MANEJAR".into(), frac: None },
+            Interact::Loot { .. } => Prompt { label: "F · ABRIR LA CAJA".into(), frac: None },
+            Interact::Hostage { mission } => Prompt { label: "MANTENÉ F · LIBERAR AL REHÉN".into(), frac: Some((self.director.missions[*mission].hold / 2.5).min(1.0)) },
+        }
+    }
+
+    /// Cliente online: el cartel de interacción calculado sobre la copia del mundo.
+    pub fn client_prompt(&self, level: &Level, a: &Actor, driving: bool, hold: f32) -> Option<Prompt> {
+        self.city.as_ref()?;
+        if driving {
+            return Some(Prompt { label: "F · BAJAR".into(), frac: None });
+        }
+        self.find_interact(level, a).map(|i| self.prompt_for(level, &i, hold))
     }
 
     /// `find_interact` para los jugadores remotos.

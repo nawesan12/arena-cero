@@ -140,6 +140,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn un_remoto_toma_el_subte() {
+        let mut l = crate::maps::build_level(crate::maps::MapId::Ciudad);
+        let mut g = Game::new(&mut l, 7);
+        g.add_pawn(&l, 1, "Amigo".into());
+        let (p0, p1) = {
+            let c = l.city.as_ref().unwrap();
+            (c.stations[0].platform, c.stations[1].platform)
+        };
+        g.pawns[0].state.pos = p0 + Vec3::new(0.0, crate::player::EYE, 0.2);
+        // sin tren no viaja
+        g.trains[0].t = 0.0;
+        assert!(!g.pawn_ride(&l, 1, 1));
+        // con las puertas abiertas, sí
+        g.trains[0].t = ARRIVE + 5.0;
+        assert!(g.pawn_ride(&l, 1, 1));
+        assert!(g.pawns[0].state.pos.distance(p1) < 2.5, "llegó a la otra estación");
+    }
+
+    #[test]
     fn el_tren_llega_para_y_se_va() {
         assert!(offset(0.0).unwrap() < -90.0);
         assert_eq!(offset(ARRIVE + 1.0), Some(0.0));

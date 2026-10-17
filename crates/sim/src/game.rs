@@ -211,6 +211,8 @@ pub struct Game {
     pub targets: Vec<Target>,
     /// Jugadores remotos (online).
     pub pawns: Vec<crate::pawn::Pawn>,
+    /// Índice del primer remoto en la lista de objetivos (1 si el anfitrión juega).
+    pub pawn_base: u8,
 }
 
 impl Game {
@@ -263,6 +265,7 @@ impl Game {
             blasting: false,
             targets: Vec::new(),
             pawns: Vec::new(),
+            pawn_base: 0,
         };
         if let Some(c) = level.city.as_ref() {
             let n_st = c.stations.len();
@@ -1299,6 +1302,11 @@ impl Game {
     /// Un paso de manejo del auto que lleva el jugador: física, atropellos y ruido del motor.
     pub fn drive(&mut self, level: &mut Level, input: &crate::vehicle::DriveInput, dt: f32) {
         let Some(vi) = self.driving else { return };
+        self.drive_vehicle(level, vi, input, dt, 0);
+    }
+
+    /// Manejo de un auto por cualquier jugador (`to`: a quién lastima el choque).
+    pub fn drive_vehicle(&mut self, level: &mut Level, vi: usize, input: &crate::vehicle::DriveInput, dt: f32, to: u8) {
         let impact = self.vehicles[vi].drive(input, &mut level.world, dt);
         let v = self.vehicles[vi].clone();
         if impact > 12.0 {
@@ -1306,7 +1314,7 @@ impl Game {
             self.events.push(GameEvent::Sound(Snd::Crash));
             self.make_noise(v.pos, 40.0);
             if impact > 22.0 {
-                self.events.push(GameEvent::Hurt { dmg: ((impact - 20.0) * 1.5).round(), from: None, to: 0 });
+                self.events.push(GameEvent::Hurt { dmg: ((impact - 20.0) * 1.5).round(), from: None, to });
             }
         }
         // atropellos: soldados delante o al costado del auto, a más de 6 m/s
@@ -1350,7 +1358,15 @@ impl Game {
 
     /// Auto cercano para subirse con F (a menos de 3,2 m del centro).
     pub fn vehicle_near(&self, pos: Vec3) -> Option<usize> {
-        self.vehicles.iter().position(|v| (v.pos.x - pos.x).hypot(v.pos.z - pos.z) < 3.2 && (v.pos.y - (pos.y - 1.6)).abs() < 1.5)
+        (0..self.vehicles.len()).find(|&i| {
+            let v = &self.vehicles[i];
+            (v.pos.x - pos.x).hypot(v.pos.z - pos.z) < 3.2 && (v.pos.y - (pos.y - 1.6)).abs() < 1.5 && !self.vehicle_taken(i)
+        })
+    }
+
+    /// ¿Lo maneja alguien? (el anfitrión o un remoto)
+    pub fn vehicle_taken(&self, i: usize) -> bool {
+        self.driving == Some(i) || self.pawns.iter().any(|p| p.driving == Some(i))
     }
 }
 

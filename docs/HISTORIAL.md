@@ -144,8 +144,7 @@ sombra (1.458 → 408 mallas con sombra), sin caras de abajo y árboles con dos 
 
 ## Lo que sigue
 
-- Online: probarlo con dos máquinas; manejar autos y subirse al subte siendo cliente; nombres sobre los
-  compañeros; oleadas que cambian de arena también online.
+- Online: probarlo con dos máquinas (autos, subte y oleadas siendo cliente ya están, sin probar jugando).
 
 - Probar la ciudad nueva jugando: rendimiento (hay muchas más piezas), lugares de la campaña y autos.
 - Ajustar el brillo, la campaña y las rachas jugando.

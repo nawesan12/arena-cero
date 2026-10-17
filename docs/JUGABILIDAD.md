@@ -27,7 +27,9 @@ Menú → **Jugar online**:
 - Online la partida no se pausa: con el menú abierto te quedás quieto pero te pueden pegar.
 - Si caés, reaparecés a los 5 s en el punto de control (campaña), el refugio o el inicio. La campaña avanza con
   lo que haga cualquiera; al terminar una operación, el anfitrión elige cómo sigue.
-- Por ahora siendo cliente no se manejan autos ni se usa el subte, y las oleadas online no cambian de arena.
+- Los compañeros tienen su nombre y distancia encima (en rojo si están caídos).
+- Siendo cliente también se manejan autos (el tuyo se predice y se corrige suave) y se toma el subte.
+- En oleadas, cuando el anfitrión pasa de arena, los demás se reabren solos en la nueva y se vuelven a conectar.
 
 **Servidor dedicado**: `arena-cero-servidor [--modo campana N | libre | oleadas N] [--puerto 47800] [--nombre "…"]`.
 También aparece solo en la red local. En campaña pasa solo a la próxima operación.

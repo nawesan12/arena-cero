@@ -54,7 +54,7 @@ impl NetHost {
     }
 
     /// Recibe conexiones, saludos y controles. Llamar una vez por paso, antes de simular.
-    pub fn receive(&mut self, game: &mut Game, level: &Level) {
+    pub fn receive(&mut self, game: &mut Game, level: &mut Level) {
         let now = Instant::now();
         let dt = now - self.last;
         self.last = now;
@@ -86,13 +86,19 @@ impl NetHost {
         let ids: Vec<(ClientId, u8)> = self.clients.iter().map(|(c, i)| (*c, *i)).collect();
         for (cid, id) in ids {
             while let Some(b) = self.server.receive_message(cid, CH_RELIABLE) {
-                if let Some(ToServer::Hello { name, .. }) = unpack::<ToServer>(&b) {
-                    let name: String = name.chars().take(16).collect();
-                    self.names.insert(id, name.clone());
-                    if let Some(p) = game.pawns.iter_mut().find(|p| p.id == id) {
-                        p.name = name;
+                match unpack::<ToServer>(&b) {
+                    Some(ToServer::Hello { name, .. }) => {
+                        let name: String = name.chars().take(16).collect();
+                        self.names.insert(id, name.clone());
+                        if let Some(p) = game.pawns.iter_mut().find(|p| p.id == id) {
+                            p.name = name;
+                        }
+                        self.broadcast_players();
                     }
-                    self.broadcast_players();
+                    Some(ToServer::Ride { to }) => {
+                        game.pawn_ride(level, id, to as usize);
+                    }
+                    _ => {}
                 }
             }
             while let Some(b) = self.server.receive_message(cid, CH_FAST) {
@@ -160,7 +166,7 @@ impl NetHost {
             let ids: Vec<(ClientId, u8)> = self.clients.iter().map(|(c, i)| (*c, *i)).collect();
             for (cid, id) in ids {
                 let Some(p) = game.pawns.iter_mut().find(|p| p.id == id) else { continue };
-                let you = YouSnap { pos: p.state.pos, vel: p.state.vel, hp: p.hp, max_hp: p.max_hp, ammo: p.arsenal.ammo, weapon: p.arsenal.w as u8, nades: p.arsenal.nades, down: p.down, marks: std::mem::take(&mut p.marks), ack: p.last_seq };
+                let you = YouSnap { pos: p.state.pos, vel: p.state.vel, hp: p.hp, max_hp: p.max_hp, ammo: p.arsenal.ammo, weapon: p.arsenal.w as u8, nades: p.arsenal.nades, down: p.down, marks: std::mem::take(&mut p.marks), ack: p.last_seq, driving: p.driving.map(|v| v as u16), hold: p.hold };
                 let at = p.state.pos;
                 let players: Vec<PlayerSnap> = others.iter().filter(|o| o.id != id).cloned().collect();
                 let snap = snapshot(game, level, at, self.tick, players, Some(you));

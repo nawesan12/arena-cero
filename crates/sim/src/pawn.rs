@@ -37,6 +37,8 @@ pub struct PawnInput {
     pub reload_n: u8,
     pub nade_n: u8,
     pub tag_n: u8,
+    /// Freno de mano (Espacio) mientras maneja.
+    pub brake: bool,
     /// Número de secuencia (el servidor confirma el último que procesó).
     pub seq: u32,
 }
@@ -56,8 +58,10 @@ pub struct Pawn {
     pub down: f32,
     pub input: PawnInput,
     last: PawnInput,
-    /// F sostenida en un objetivo.
-    hold: f32,
+    /// F sostenida en un objetivo (segundos).
+    pub hold: f32,
+    /// Auto que maneja (índice en `Game::vehicles`).
+    pub driving: Option<usize>,
     use_was: bool,
     /// Eventos de movimiento y armas de este paso (para que el cliente los muestre).
     pub fx: Vec<PlayerEvent>,
@@ -73,7 +77,7 @@ impl Pawn {
     pub fn new(id: u8, name: String, at: Vec3, city: bool) -> Self {
         let mut state = PlayerState::new(at.x, at.z);
         state.pos.y = at.y + EYE;
-        Self { id, name, state, arsenal: Arsenal::new(city), rng: Rng::new(100 + u32::from(id)), hp: 100.0, max_hp: 100.0, last_hurt: 10.0, down: 0.0, input: PawnInput::default(), last: PawnInput::default(), hold: 0.0, use_was: false, fx: Vec::new(), wfx: Vec::new(), kills: 0, marks: Vec::new(), last_seq: 0 }
+        Self { id, name, state, arsenal: Arsenal::new(city), rng: Rng::new(100 + u32::from(id)), hp: 100.0, max_hp: 100.0, last_hurt: 10.0, down: 0.0, input: PawnInput::default(), last: PawnInput::default(), hold: 0.0, use_was: false, fx: Vec::new(), wfx: Vec::new(), kills: 0, marks: Vec::new(), last_seq: 0, driving: None }
     }
 
     /// Lo que la IA ve de este jugador.
@@ -123,7 +127,8 @@ impl Game {
     }
 
     /// Objetivos de la IA: el anfitrión (si juega) y después los remotos vivos.
-    pub fn all_targets(&self, host: Option<Target>) -> Vec<Target> {
+    pub fn all_targets(&mut self, host: Option<Target>) -> Vec<Target> {
+        self.pawn_base = u8::from(host.is_some());
         let mut v: Vec<Target> = host.into_iter().collect();
         for p in &self.pawns {
             // caído: lejos, para que nadie le apunte
@@ -139,6 +144,7 @@ impl Game {
             p.fx.clear();
             p.wfx.clear();
             if !p.alive() {
+                p.driving = None;
                 p.down -= dt;
                 if p.down <= 0.0 {
                     let at = self.pawn_spawn(level);
@@ -156,6 +162,27 @@ impl Game {
             }
             let (inp, last) = (p.input, p.last);
             p.last_seq = inp.seq;
+            if let Some(vi) = p.driving {
+                // manejando: W/S acelerador, A/D dirección, Espacio freno; va sentado en el auto
+                p.last = inp;
+                p.last_hurt += dt;
+                let din = crate::vehicle::DriveInput { throttle: inp.forward.clamp(-1.0, 1.0), steer: inp.right.clamp(-1.0, 1.0), brake: inp.brake };
+                let to = self.pawn_base + i as u8;
+                self.drive_vehicle(level, vi, &din, dt, to);
+                let v = &self.vehicles[vi];
+                let (pos, vel, wrecked) = (v.pos + Vec3::Y * 1.6, v.forward() * v.speed, v.wrecked);
+                let p = &mut self.pawns[i];
+                p.state.pos = pos;
+                p.state.vel = vel;
+                p.state.yaw = inp.yaw;
+                p.state.pitch = inp.pitch;
+                p.state.on_ground = true;
+                p.state.hook = None;
+                if wrecked {
+                    self.pawn_exit(level, i);
+                }
+                continue;
+            }
             let pulse = |a: u8, b: u8| a != b;
             let mv = PlayerInput {
                 forward: inp.forward.clamp(-1.0, 1.0),
@@ -249,6 +276,13 @@ impl Game {
             }
             let a = crate::objectives::Actor { pos: p.state.pos, feet: p.state.feet(), f_held: p.input.use_held };
             let pressed = a.f_held && !p.use_was;
+            if p.driving.is_some() {
+                self.pawns[i].use_was = a.f_held;
+                if pressed {
+                    self.pawn_exit(level, i);
+                }
+                continue;
+            }
             let found = self.find_interact_pub(level, &a);
             let p = &mut self.pawns[i];
             p.use_was = a.f_held;
@@ -271,9 +305,45 @@ impl Game {
                     p.hp = p.max_hp;
                     p.arsenal.refill();
                 }
+                Some(Interact::Drive { vehicle }) if pressed => {
+                    // robar un auto del tránsito: el conductor se baja corriendo
+                    if self.vehicles[vehicle].ai.as_ref().is_some_and(|a| a.civil) {
+                        self.vehicles[vehicle].ai = None;
+                        let p = self.vehicles[vehicle].pos;
+                        self.scare_people(p, 12.0);
+                    }
+                    self.pawns[i].driving = Some(vehicle);
+                }
                 _ => p.hold = 0.0,
             }
         }
+    }
+
+    /// El remoto se baja del auto (al costado, donde haya lugar).
+    fn pawn_exit(&mut self, level: &Level, i: usize) {
+        let Some(vi) = self.pawns[i].driving.take() else { return };
+        let spot = self.vehicles[vi].exit_spot(&level.world);
+        let p = &mut self.pawns[i];
+        p.state.pos = spot + Vec3::Y * EYE;
+        p.state.vel = Vec3::ZERO;
+    }
+
+    /// Subte para un remoto: si está en un andén con el tren abierto, viaja a la estación `to`.
+    pub fn pawn_ride(&mut self, level: &Level, id: u8, to: usize) -> bool {
+        let Some(i) = self.pawns.iter().position(|p| p.id == id && p.alive() && p.driving.is_none()) else { return false };
+        let s = &self.pawns[i].state;
+        let feet = Vec3::new(s.pos.x, s.feet(), s.pos.z);
+        let Some(from) = self.train_boardable(level, feet) else { return false };
+        if from == to {
+            return false;
+        }
+        let Some(at) = self.ride_train(level, from, to) else { return false };
+        let p = &mut self.pawns[i];
+        p.state.pos = at + Vec3::Y * EYE;
+        p.state.vel = Vec3::ZERO;
+        p.state.hook = None;
+        self.campaign_rode();
+        true
     }
 }
 
@@ -338,6 +408,32 @@ mod tests {
             }
         }
         assert!(g.campaign.as_ref().unwrap().step > first, "el remoto cumplió el primer paso");
+    }
+
+    #[test]
+    fn un_remoto_maneja_un_auto_y_se_baja() {
+        let mut l = build_level(MapId::Ciudad);
+        let mut g = Game::new(&mut l, 7);
+        g.add_pawn(&l, 1, "Amigo".into());
+        let vi = g.vehicles.iter().position(|v| v.ai.is_none() && !v.wrecked).expect("un auto estacionado");
+        let v0 = g.vehicles[vi].pos;
+        g.pawns[0].state.pos = v0 + g.vehicles[vi].right() * 2.0 + Vec3::Y * 1.6;
+        g.pawns[0].input.use_held = true;
+        g.step_pawn_use(&mut l, crate::TICK);
+        assert_eq!(g.pawns[0].driving, Some(vi), "se subió");
+        g.pawns[0].input = PawnInput { forward: 1.0, ..Default::default() };
+        for _ in 0..120 {
+            g.step_pawns(&mut l, crate::TICK);
+            g.step_pawn_use(&mut l, crate::TICK);
+        }
+        let moved = g.vehicles[vi].pos.distance(v0);
+        assert!(moved > 4.0, "el auto anduvo {moved} m");
+        assert!(g.pawns[0].state.pos.distance(g.vehicles[vi].pos) < 2.0, "va adentro");
+        // otro no se puede subir al mismo auto
+        assert!(g.vehicle_near(g.vehicles[vi].pos + Vec3::Y * 1.6).is_none_or(|k| k != vi));
+        g.pawns[0].input = PawnInput { use_held: true, ..Default::default() };
+        g.step_pawn_use(&mut l, crate::TICK);
+        assert_eq!(g.pawns[0].driving, None, "se bajó");
     }
 
     #[test]

@@ -39,6 +39,8 @@ enum Style {
     Seen,
     /// Triángulo rojo: marcado.
     Tag,
+    /// Compañero online: rombo de su color con su número y el nombre.
+    Mate(Color),
 }
 
 #[derive(Component)]
@@ -100,6 +102,7 @@ fn markers(
     win: Single<&Window>,
     target: Option<Res<crate::render_scale::SceneTarget>>,
     cam: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    net: Res<crate::online::Online>,
     mut roots: Query<(&Mk, &mut Node, &mut Visibility), (Without<MkBar>, Without<MkBarFill>, Without<MkIcon>)>,
     mut icons: Query<(&MkIcon, &mut Visibility, &Children), (Without<Mk>, Without<MkBar>)>,
     mut icon_bg: Query<(&mut BackgroundColor, &mut UiTransform), (Without<MkBarFill>, Without<MkBar>)>,
@@ -146,6 +149,14 @@ fn markers(
                     items.push(Item { pos: p + Vec3::Y * 1.2, style: Style::Supply, icon: "+".into(), label: if d < 8.0 { name.to_uppercase() } else { format!("{} m", d.round()) }, clamp: false });
                 }
             }
+        }
+        // compañeros online: nombre y distancia (caído, en rojo)
+        for o in &net.others {
+            let d = o.pos.distance(me);
+            let c = crate::world_render::col(crate::humanoid::TEAM[o.id as usize % crate::humanoid::TEAM.len()]);
+            let name = net.name_of(o.id).to_uppercase();
+            let label = if o.alive { if d < 25.0 { name } else { format!("{name} · {} m", d.round()) } } else { format!("{name} · CAÍDO") };
+            items.push(Item { pos: o.pos + Vec3::Y * 0.75, style: Style::Mate(if o.alive { c } else { RED }), icon: format!("{}", o.id + 1), label, clamp: true });
         }
         // misiones activas y botín cercano
         for m in &g.director.missions {
@@ -216,6 +227,7 @@ fn markers(
             if let Ok((mut bg, mut tr)) = icon_bg.get_mut(d) {
                 let (c, round) = match it.style {
                     Style::Obj(c) => (c, false),
+                    Style::Mate(c) => (c, true),
                     Style::Supply => (MINT, true),
                     Style::Seen => (RED, true),
                     Style::Tag => (RED, false),
