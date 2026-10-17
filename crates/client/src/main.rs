@@ -5,10 +5,13 @@
 
 mod audio;
 mod config;
+mod enemies_view;
 mod fx;
+mod game;
 mod gun;
 mod gunmodels;
 mod hud;
+mod hud_combat;
 mod materials;
 mod player;
 mod quality;
@@ -65,7 +68,7 @@ fn main() {
             ..default()
         }))
         .insert_resource(args)
-        .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin, gun::GunPlugin, fx::FxPlugin, audio::AudioSynthPlugin))
+        .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin, gun::GunPlugin, fx::FxPlugin, audio::AudioSynthPlugin, enemies_view::EnemiesViewPlugin, hud_combat::HudCombatPlugin))
         .add_systems(PreStartup, setup)
         .add_systems(Update, (world_render::follow_sky, world_render::animate_lava, auto_shot))
         .run();
@@ -73,7 +76,7 @@ fn main() {
 
 fn setup(mut commands: Commands, args: Res<Args>, mut quality: ResMut<quality::QualityRes>, mut settings: ResMut<player::Settings>, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>) {
     let t0 = std::time::Instant::now();
-    let level = build_level(args.map.unwrap_or(MapId::Ciudad));
+    let mut level = build_level(args.map.unwrap_or(MapId::Ciudad));
     let t1 = t0.elapsed();
     let mut looks = materials::Looks::new(&mut images, &mut mats);
     world_render::spawn_level(&mut commands, &mut meshes, &mut mats, &mut looks, &level);
@@ -89,6 +92,8 @@ fn setup(mut commands: Commands, args: Res<Args>, mut quality: ResMut<quality::Q
     quality.dirty = true;
     // en modo captura no se toma el mouse: la ventana puede quedar debajo de otras
     settings.input = args.shot.is_none();
+    commands.insert_resource(game::GameRes(arena_sim::game::Game::new(&mut level, 7)));
+    commands.init_resource::<game::UiFeed>();
     let res = world_render::LevelRes(level);
     player::spawn_player(&mut commands, &res, args.at, args.weapon);
     commands.insert_resource(res);

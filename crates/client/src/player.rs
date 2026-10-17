@@ -3,11 +3,16 @@
 
 use crate::audio::{S, Sounds};
 use crate::fx::Fx;
+use crate::game::{GameRes, UiFeed};
+use crate::audio::MusicLevel;
 use crate::gun::GunRig;
 use crate::world_render::LevelRes;
 use arena_sim::player::{BASE_FOV, EYE};
 use arena_sim::rng::Rng;
-use arena_sim::weapons::{Arsenal, Nade, WEAPONS, WeaponEvent, WeaponInput, update_nades};
+use arena_sim::enemies::Target;
+use arena_sim::game::{Game, GameEvent, Mark, Snd};
+use arena_sim::maps::Level;
+use arena_sim::weapons::{Arsenal, WEAPONS, WeaponEvent, WeaponInput};
 use arena_sim::{PlayerEvent, PlayerInput, PlayerState, TICK};
 use bevy::camera::Exposure;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -73,7 +78,6 @@ pub struct LocalPlayer {
     pub prev: Vec3,
     pub events: Vec<PlayerEvent>,
     pub arsenal: Arsenal,
-    pub nades: Vec<Nade>,
     pub rng: Rng,
     pub hp: f32,
     pub max_hp: f32,
@@ -137,7 +141,6 @@ pub fn spawn_player(commands: &mut Commands, level: &LevelRes, start: Option<[f3
         state,
         events: Vec::new(),
         arsenal,
-        nades: Vec::new(),
         rng: Rng::new(7),
         hp: 100.0,
         max_hp: 100.0,
@@ -220,8 +223,11 @@ fn step_player(
     time: Res<Time<Real>>,
     mut look: ResMut<Look>,
     mut latch: ResMut<Latch>,
-    level: Res<LevelRes>,
+    mut level: ResMut<LevelRes>,
     mut lp: ResMut<LocalPlayer>,
+    mut game: ResMut<GameRes>,
+    mut ui: ResMut<UiFeed>,
+    mut music: ResMut<MusicLevel>,
     mut rig: ResMut<GunRig>,
     mut fx: ResMut<Fx>,
     mut snd: ResMut<Sounds>,
@@ -247,13 +253,14 @@ fn step_player(
         cycle: std::mem::take(&mut latch.cycle),
         nade: std::mem::take(&mut latch.nade),
     };
-    let world = &level.0.world;
     let lp = &mut *lp;
+    let level = &mut level.0;
+    let game = &mut game.0;
     lp.prev = lp.state.eye();
     let aim_before = lp.state.aim_t;
     let mut pev = std::mem::take(&mut lp.events);
     pev.clear();
-    lp.state.step(&input, world, TICK, &mut pev);
+    lp.state.step(&input, &level.world, TICK, &mut pev);
     for e in &pev {
         match *e {
             PlayerEvent::Burn(d) => {
@@ -282,86 +289,134 @@ fn step_player(
         snd.play(S::Aim);
     }
 
-    // armas
+    // armas: las granadas van a la partida, que también resuelve los disparos contra enemigos
     let mut wev = Vec::new();
-    let (arsenal, state, nades, rng) = (&mut lp.arsenal, &mut lp.state, &mut lp.nades, &mut lp.rng);
-    arsenal.step(&winput, state, nades, rng, TICK, &mut wev);
-    update_nades(&mut lp.nades, world, TICK, |_| false, &mut wev);
-    // boca del caño en el mundo: la posición del arma en espacio de cámara llevada al mundo
+    let (arsenal, state, rng) = (&mut lp.arsenal, &mut lp.state, &mut lp.rng);
+    arsenal.step(&winput, state, &mut game.nades, rng, TICK, &mut wev);
     let cam_rot = Quat::from_euler(EulerRot::YXZ, lp.state.yaw, lp.state.pitch, 0.0);
     let muzzle = lp.state.eye() + cam_rot * rig.muzzle_cam;
+    game.weapon_events(&wev, lp.arsenal.crit_mul, muzzle, lp.state.body(), level);
     for e in wev {
         match e {
-            WeaponEvent::Fire { weapon, pellets, pierce, .. } => {
+            WeaponEvent::Fire { weapon, .. } => {
                 // el destello dura casi todo el cuadro de disparo (en la web, hasta rate − 0,04)
                 rig.flash_t = (WEAPONS[weapon].rate - 0.04).min(0.06);
                 snd.play(S::Shot(weapon.min(2) as u8));
-                let color = if pierce { 0x5fd8ff } else { 0xffc66a };
-                for (k, p) in pellets.iter().enumerate() {
-                    let t = world.ray(p.origin, p.dir, 120.0);
-                    let end = p.origin + p.dir * if t < 120.0 { t } else { 80.0 };
-                    if t < 120.0 {
-                        fx.burst(end, if pierce { 0x5fd8ff } else { 0xffb02e }, if pierce { 10 } else { 3 }, 4.0, 0.3);
-                    }
-                    if pierce || k % 3 == 0 {
-                        fx.tracer(muzzle, end, color, if pierce { 0.18 } else { 0.05 });
-                    }
-                }
             }
             WeaponEvent::Launch { .. } => {
                 rig.flash_t = 0.06;
-                snd.play(S::Launch);
                 rig.drum_target += std::f32::consts::PI / 3.0;
+                snd.play(S::Launch);
             }
             WeaponEvent::Kick { pitch, yaw } => {
                 look.pitch = (look.pitch + pitch).min(1.5);
                 look.yaw += yaw;
             }
-            WeaponEvent::Explosion(x) => {
-                fx.burst(x.pos, 0xffb02e, if x.big { 60 } else { 30 }, if x.big { 12.0 } else { 8.0 }, 0.7);
-                fx.burst(x.pos, 0xff3d5a, if x.big { 24 } else { 12 }, 9.0, 0.6);
-                fx.burst(x.pos, 0x2a2a2a, if x.big { 20 } else { 8 }, 5.0, 1.2);
-                fx.boom(x.pos, x.big);
-                if x.big {
-                    snd.play(S::Boom);
-                }
-                let body = Vec3::new(lp.state.pos.x, lp.state.pos.y - 0.8, lp.state.pos.z);
-                let pd = body.distance(x.pos);
-                lp.state.shake = (lp.state.shake + if x.big { 0.9 } else { 0.4 } * (1.0 - pd / 20.0).max(0.0)).min(1.0);
-                if x.self_dmg > 0.0 && pd < x.radius {
-                    lp.hurt((x.self_dmg * (1.0 - pd / x.radius)).round(), Some(x.pos));
-                }
-            }
             WeaponEvent::Toss => snd.play(S::Toss),
             WeaponEvent::Empty => snd.play(S::Empty),
             WeaponEvent::Reload => snd.play(S::Reload),
             WeaponEvent::Swap(_) => snd.play(S::Swap),
-            WeaponEvent::Beep => snd.play(S::Beep),
+            WeaponEvent::Locked => ui.banner("BLOQUEADA", "Forzá el arsenal para usar esta arma"),
             _ => {}
+        }
+    }
+
+    // partida
+    let s = &lp.state;
+    let target = Target { pos: s.pos, body: s.body(), vel: s.vel, feet: s.feet(), crouch_t: s.crouch_t, evasive: s.hook.is_some() || s.dash_t > 0.0 };
+    game.step(level, &target, lp.hp >= lp.max_hp, TICK);
+    let beeps = game.nades.iter().filter(|n| !n.impact && n.beep > 0.3 - TICK && n.beep <= 0.3).count();
+    if beeps > 0 {
+        snd.play(S::Beep);
+    }
+    for e in std::mem::take(&mut game.events) {
+        match e {
+            GameEvent::Hurt { dmg, from } => lp.hurt(dmg, from),
+            GameEvent::Sound(x) => match x {
+                Snd::EShot { dist, big } => snd.play_vol(if big { S::EShotBig } else { S::EShot }, ((if big { 0.5 } else { 0.25 }) - dist * 0.005).max(0.02)),
+                Snd::Enemy { dist } => snd.play_vol(S::Enemy, (0.14 - dist * 0.004).max(0.02)),
+                Snd::Whiz => snd.play(S::Whiz),
+                Snd::Boss => snd.play(S::Boss),
+                Snd::Siren => snd.play(S::Siren),
+                Snd::AlertBeep => snd.play(S::AlertBeep),
+                Snd::Kill => snd.play(S::Kill),
+                Snd::Boom => snd.play(S::Boom),
+                Snd::Hit => snd.play(S::Hit),
+                Snd::Crit => snd.play(S::Crit),
+                Snd::Ricochet => snd.play(S::Ricochet),
+                Snd::Pickup => snd.play(S::Pickup),
+            },
+            GameEvent::Burst { pos, color, n, speed, life } => fx.burst(pos, color, n, speed, life),
+            GameEvent::Tracer { a, b, color, life } => fx.tracer(a, b, color, life),
+            GameEvent::Boom { pos, big } => fx.boom(pos, big),
+            GameEvent::Shake(k) => lp.state.shake = (lp.state.shake + k).min(1.0),
+            GameEvent::Banner { title, sub } => ui.banner(title, sub),
+            GameEvent::Mark(m) => {
+                ui.mark = Some(m);
+                ui.mark_t = if m == Mark::Kill { 0.25 } else { 0.12 };
+            }
+            GameEvent::Num { pos, value, crit } => ui.nums.push((pos, value, crit, 0.0)),
+            GameEvent::Heal(h) => lp.hp = (lp.hp + h).min(lp.max_hp),
+            GameEvent::Overdrive => lp.arsenal.overdrive = 8.0,
         }
     }
     for _ in 0..std::mem::take(&mut lp.hurt_count).min(1) {
         snd.play(S::Hurt);
     }
+    music.0 = game.music_level(lp.hp / lp.max_hp);
 
-    // vida: regeneración tras 4 s sin daño; al morir, de vuelta al inicio (todavía no hay enemigos)
+    // vida: regeneración tras 4 s sin daño
     lp.last_hurt += TICK;
     if lp.last_hurt > 4.0 && lp.hp < lp.max_hp {
         lp.hp = (lp.hp + 4.0 * lp.regen_mul * TICK).min(lp.max_hp);
     }
     if lp.hp <= 0.0 {
-        let start = lp.start;
-        lp.state = PlayerState::new(start.x, start.z);
-        lp.state.pos = start;
-        lp.prev = start;
-        lp.hp = lp.max_hp;
-        lp.nades.clear();
+        player_down(lp, game, level, &mut ui);
     }
     if lp.state.on_ground && lp.state.slide <= 0.0 {
         lp.bob += TICK * lp.state.horizontal_speed() * 1.6;
     }
     lp.hurt_flash = (lp.hurt_flash - TICK * 1.6).max(0.0);
     lp.dmg_t = (lp.dmg_t - TICK * 1.2).max(0.0);
+}
+
+/// Caída del jugador. En la ciudad cuesta un intento y se reaparece en el punto de
+/// reabastecimiento más cercano; sin intentos (o en oleadas) la partida vuelve a empezar.
+fn player_down(lp: &mut LocalPlayer, game: &mut Game, level: &mut Level, ui: &mut UiFeed) {
+    let city_lives = game.city.as_ref().map(|c| c.lives);
+    let respawn = |lp: &mut LocalPlayer, at: Vec3| {
+        let yaw = lp.state.yaw;
+        lp.state = PlayerState::new(at.x, at.z);
+        lp.state.pos = Vec3::new(at.x, at.y, at.z);
+        lp.state.yaw = yaw;
+        lp.prev = lp.state.pos;
+        lp.hp = lp.max_hp;
+        lp.last_hurt = 10.0;
+        lp.hurt_flash = 1.0;
+    };
+    match city_lives {
+        Some(l) if l > 1 => {
+            game.city.as_mut().unwrap().lives -= 1;
+            game.on_player_down();
+            let safe = level.city.as_ref().map_or(lp.start, |c| c.safe_pos + Vec3::new(1.5, EYE - 1.0, 1.5));
+            respawn(lp, safe);
+            let left = l - 1;
+            ui.banner("CAÍSTE", if left > 1 { format!("Te quedan {left} intentos") } else { "Último intento".into() });
+        }
+        _ => {
+            let (score, wave, kills) = (game.score, game.wave, game.kills);
+            game.teardown(&mut level.world);
+            *game = Game::new(level, 7);
+            let start = lp.start;
+            respawn(lp, start);
+            lp.arsenal = Arsenal::new(level.info.city);
+            if level.info.city {
+                ui.banner("SIN INTENTOS", format!("{score} puntos · {kills} bajas · el distrito vuelve a empezar"));
+            } else {
+                ui.banner("TE DESMANTELARON", format!("{score} puntos · oleada {wave} · {kills} bajas"));
+            }
+        }
+    }
 }
 
 fn place_camera(time: Res<Time>, fixed: Res<Time<Fixed>>, mut look: ResMut<Look>, lp: Res<LocalPlayer>, mut cam: Query<(&mut Transform, &mut Projection), With<MainCamera>>) {

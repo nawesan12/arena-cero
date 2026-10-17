@@ -3,7 +3,6 @@
 //! daño y de apuntado, y la mira del riel. Colores de la web (`--ink`, `--dim`, `--amber`…).
 
 use crate::player::LocalPlayer;
-use crate::world_render::LevelRes;
 use arena_sim::weapons::WEAPONS;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
@@ -137,8 +136,9 @@ fn spawn_hud(mut commands: Commands, mut font_assets: ResMut<Assets<Font>>, mut 
         p.spawn((Node { position_type: PositionType::Absolute, left: px(-1), top: px(-1), width: px(2), height: px(2), ..default() }, BackgroundColor(AMBER), CrossDot));
     });
     // arriba a la izquierda
-    commands.spawn(Node { position_type: PositionType::Absolute, left: px(16), top: px(14), flex_direction: FlexDirection::Column, ..default() }).with_children(|p| {
-        p.spawn((label("", 14.0, DIM, &f.mono), T::Info));
+    // posición y velocidad, chico abajo al centro (útil para probar)
+    commands.spawn((Node { position_type: PositionType::Absolute, bottom: px(22), width: percent(100), justify_content: JustifyContent::Center, ..default() },)).with_children(|p| {
+        p.spawn((label("", 11.0, DIM.with_alpha(0.7), &f.mono), T::Info, TextLayout::justify(Justify::Center)));
     });
     // abajo a la izquierda: vida, postura y dash
     commands.spawn(Node { position_type: PositionType::Absolute, left: px(16), bottom: px(16), flex_direction: FlexDirection::Column, row_gap: px(4), ..default() }).with_children(|p| {
@@ -188,7 +188,6 @@ fn spawn_hud(mut commands: Commands, mut font_assets: ResMut<Assets<Font>>, mut 
 fn update_hud(
     time: Res<Time>,
     lp: Res<LocalPlayer>,
-    level: Res<LevelRes>,
     diag: Res<DiagnosticsStore>,
     cursor: Single<&CursorOptions>,
     mut texts: Query<(&mut Text, &mut TextColor, &T)>,
@@ -216,7 +215,7 @@ fn update_hud(
         String::new()
     };
     let p = s.pos;
-    let info = format!("{} · {}\nx {:.0}  z {:.0}  altura {:.1} m  ·  {:.1} m/s", level.0.info.name, level.0.info.size, p.x, p.z, s.feet(), s.horizontal_speed());
+    let info = format!("x {:.0}  z {:.0}  altura {:.1} m  ·  {:.1} m/s", p.x, p.z, s.feet(), s.horizontal_speed());
     let fps = diag.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).map(|f| format!("{f:.0} FPS"));
     let mag = a.mag_of(a.w);
     let ammo = a.ammo[a.w];

@@ -5,8 +5,11 @@
 //! una semilla, así servidor y clientes arman el mismo mapa sin mandarlo por red.
 
 pub mod city;
+pub mod enemies;
+pub mod game;
 pub mod maps;
 pub mod mat;
+pub mod nav;
 pub mod player;
 pub mod rng;
 pub mod weapons;

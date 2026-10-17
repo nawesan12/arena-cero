@@ -1,0 +1,926 @@
+//! Partida: junta enemigos, proyectiles, granadas, explosiones, puntaje, oleadas y el estado de
+//! la ciudad (alarmas por puesto, refuerzos, cadáveres). Es lo que después corre el servidor.
+//! El jugador entra como `Target` y el daño sale como eventos `Hurt` que aplica quien lo tenga.
+
+use crate::city::{CityData, OutpostId};
+use crate::enemies::*;
+use crate::maps::Level;
+use crate::nav::NavGrid;
+use crate::rng::Rng;
+use crate::weapons::{Explosion, Nade, Pellet, WeaponEvent, enemy_nade, update_nades};
+use crate::world::{ColliderId, World};
+use glam::Vec3;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Mode {
+    City,
+    Waves,
+}
+
+/// Sonidos que pide la partida (el cliente los traduce a sus efectos).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Snd {
+    EShot { dist: f32, big: bool },
+    Whiz,
+    Enemy { dist: f32 },
+    Boss,
+    Siren,
+    AlertBeep,
+    Kill,
+    Boom,
+    Hit,
+    Crit,
+    Ricochet,
+    Pickup,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Mark {
+    Hit,
+    Crit,
+    Kill,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum GameEvent {
+    Hurt { dmg: f32, from: Option<Vec3> },
+    Sound(Snd),
+    Burst { pos: Vec3, color: u32, n: u32, speed: f32, life: f32 },
+    Tracer { a: Vec3, b: Vec3, color: u32, life: f32 },
+    Boom { pos: Vec3, big: bool },
+    Shake(f32),
+    Banner { title: String, sub: String },
+    Mark(Mark),
+    /// Número de daño flotante (×10, como en la web).
+    Num { pos: Vec3, value: f32, crit: bool },
+    Heal(f32),
+    Overdrive,
+}
+
+#[derive(Clone, Debug)]
+pub struct Shot {
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub life: f32,
+    pub dmg: f32,
+    pub from: Vec3,
+    pub heavy: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct Orb {
+    pub pos: Vec3,
+    pub life: f32,
+    pub od: bool,
+}
+
+/// Estado de la ciudad durante la partida.
+#[derive(Debug)]
+pub struct CityRun {
+    pub ops: Vec<OpState>,
+    pub powered: bool,
+    pub antenna: bool,
+    pub drones: bool,
+    pub intel: bool,
+    pub armory: bool,
+    pub lives: u32,
+    pub time: f32,
+    pub done: Vec<OutpostId>,
+    pub reinforce_t: f32,
+    pub stealth_kills: u32,
+    turret_cols: Vec<(u32, ColliderId)>,
+}
+
+pub struct Game {
+    pub mode: Mode,
+    pub enemies: Vec<Enemy>,
+    next_id: u32,
+    pub shots: Vec<Shot>,
+    /// Granadas del jugador y de los soldados.
+    pub nades: Vec<Nade>,
+    pub orbs: Vec<Orb>,
+    pub corpses: Vec<Corpse>,
+    pub city: Option<CityRun>,
+    pub score: u32,
+    pub kills: u32,
+    pub combo: u32,
+    pub combo_t: f32,
+    pub wave: u32,
+    pub spawn_queue: Vec<DroneKind>,
+    spawn_timer: f32,
+    pub intermission: f32,
+    pub boss: Option<u32>,
+    pub rng: Rng,
+    pub time: f32,
+    nav: Vec<NavGrid>,
+    pub events: Vec<GameEvent>,
+    /// Daño acumulado por enemigo en este paso, para el número flotante.
+    nums: Vec<(u32, f32, bool)>,
+}
+
+impl Game {
+    pub fn new(level: &mut Level, seed: u32) -> Self {
+        let mode = if level.info.city { Mode::City } else { Mode::Waves };
+        let mut g = Game {
+            mode,
+            enemies: Vec::new(),
+            next_id: 1,
+            shots: Vec::new(),
+            nades: Vec::new(),
+            orbs: Vec::new(),
+            corpses: Vec::new(),
+            city: None,
+            score: 0,
+            kills: 0,
+            combo: 0,
+            combo_t: 0.0,
+            wave: 0,
+            spawn_queue: Vec::new(),
+            spawn_timer: 0.0,
+            intermission: 1.2,
+            boss: None,
+            rng: Rng::new(seed),
+            time: 0.0,
+            nav: Vec::new(),
+            events: Vec::new(),
+            nums: Vec::new(),
+        };
+        if let Some(c) = level.city.as_ref() {
+            g.init_city(c.clone(), &mut level.world);
+        }
+        g
+    }
+
+    fn id(&mut self) -> u32 {
+        self.next_id += 1;
+        self.next_id
+    }
+
+    fn ev(&mut self, e: GameEvent) {
+        self.events.push(e);
+    }
+
+    fn burst(&mut self, pos: Vec3, color: u32, n: u32, speed: f32, life: f32) {
+        self.events.push(GameEvent::Burst { pos, color, n, speed, life });
+    }
+
+    pub fn banner(&mut self, t: impl Into<String>, s: impl Into<String>) {
+        self.events.push(GameEvent::Banner { title: t.into(), sub: s.into() });
+    }
+
+    /* ---------- ciudad ---------- */
+
+    fn init_city(&mut self, c: CityData, world: &mut World) {
+        let mut run = CityRun { ops: vec![OpState::default(); c.outposts.len()], powered: true, antenna: true, drones: true, intel: false, armory: false, lives: 3, time: 0.0, done: Vec::new(), reinforce_t: 20.0, stealth_kills: 0, turret_cols: Vec::new() };
+        for (oi, op) in c.outposts.iter().enumerate() {
+            self.nav.push(NavGrid::build(world, op.cx, op.cz, 36.0, 0.16));
+            for u in &op.units {
+                let id = self.id();
+                let e = new_soldier(id, oi, u, &mut self.rng);
+                self.enemies.push(e);
+            }
+            for t in &op.turrets {
+                let id = self.id();
+                let e = new_turret(id, oi, t, &mut self.rng);
+                run.turret_cols.push((id, world.add_collider(t.x, t.z, 0.9, 1.4, 0.9, 0.16)));
+                self.enemies.push(e);
+            }
+        }
+        for (i, route) in c.drone_routes.iter().enumerate() {
+            let id = self.id();
+            let p = route[i % route.len()];
+            let mut e = new_drone(id, DroneKind::Normal, Vec3::new(p[0], 16.0, p[1]), 0, &mut self.rng);
+            e.surv = Some(Surv { route: route.clone(), idx: i % route.len(), det: 0.0 });
+            e.hp = 5.0;
+            e.max_hp = 5.0;
+            e.value = 200;
+            self.enemies.push(e);
+        }
+        self.city = Some(run);
+    }
+
+    /// Alarma en un puesto: todas sus unidades entran en combate y llegan refuerzos.
+    fn raise_alarm(&mut self, op: usize, known: Option<Vec3>, level: &Level) {
+        let Some(run) = self.city.as_mut() else { return };
+        let alive = self.enemies.iter().any(|u| u.op == Some(op) && u.alive());
+        if run.ops[op].done && !alive {
+            return;
+        }
+        let fresh = run.ops[op].alarm <= 0.0;
+        run.ops[op].alarm = 32.0;
+        run.ops[op].ever_alarm = true;
+        let antenna = run.antenna;
+        for u in self.enemies.iter_mut().filter(|u| u.op == Some(op) && u.alive()) {
+            if let Some(k) = known {
+                u.last_seen = k;
+                if u.st != Alert::Combat {
+                    u.see_t = 1.5;
+                }
+            }
+            if u.is_soldier() && u.react <= 0.0 {
+                u.react = 0.4 + self.rng.f() * 0.5;
+            }
+            u.st = Alert::Combat;
+        }
+        if fresh {
+            self.ev(GameEvent::Sound(Snd::Siren));
+            let full = level.city.as_ref().map_or("", |c| c.outposts[op].full).to_uppercase();
+            self.banner(format!("ALERTA · {full}"), if antenna { "Pidieron refuerzos por radio" } else { "La antena está caída: no llegan refuerzos" });
+        }
+    }
+
+    /// Ruido (disparos, explosiones): los soldados tranquilos que lo oyen van a buscar.
+    pub fn make_noise(&mut self, pos: Vec3, radius: f32) {
+        if self.mode != Mode::City {
+            return;
+        }
+        for e in self.enemies.iter_mut().filter(|e| e.is_soldier() && e.alive()) {
+            let d = e.pos.distance(pos);
+            if d > radius {
+                continue;
+            }
+            if e.st == Alert::Combat {
+                if d < radius * 0.6 {
+                    e.last_seen = pos;
+                }
+            } else {
+                e.st = Alert::Search;
+                e.target = Some(pos + Vec3::new((self.rng.f() - 0.5) * 6.0, 0.0, (self.rng.f() - 0.5) * 6.0));
+                e.det = e.det.max(0.5);
+                e.search_t = 9.0;
+            }
+        }
+    }
+
+    /// Nivel de alerta global: 0 oculto, 1 buscando, 2 detectado.
+    pub fn city_alert(&self) -> u8 {
+        let Some(run) = &self.city else { return 0 };
+        if run.ops.iter().any(|o| o.alarm > 0.0) {
+            2
+        } else if self.enemies.iter().any(|e| e.is_soldier() && e.st == Alert::Search) {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// Nivel de la música dinámica (0..3).
+    pub fn music_level(&self, hp_frac: f32) -> u8 {
+        match self.mode {
+            Mode::City => {
+                let cmd_combat = self.enemies.iter().any(|e| e.kind == Kind::Soldier(SoldierKind::Commander) && e.alive() && e.st == Alert::Combat);
+                if cmd_combat { 3 } else { self.city_alert() }
+            }
+            Mode::Waves => {
+                if self.enemies.is_empty() && self.spawn_queue.is_empty() {
+                    0
+                } else if self.boss.is_some() {
+                    3
+                } else if self.combo >= 3 || hp_frac < 0.35 || self.enemies.len() > 7 {
+                    2
+                } else {
+                    1
+                }
+            }
+        }
+    }
+
+    /// Saca del mundo lo que agregó la partida (colisionadores de torretas) antes de descartarla.
+    pub fn teardown(&mut self, world: &mut World) {
+        if let Some(c) = self.city.as_mut() {
+            for (_, col) in c.turret_cols.drain(..) {
+                world.remove_collider(col);
+            }
+        }
+    }
+
+    /// Al caer en la ciudad: se calman las alarmas, se van los cazadores y los soldados vuelven a su puesto.
+    pub fn on_player_down(&mut self) {
+        self.shots.clear();
+        self.nades.retain(|n| !n.enemy);
+        if let Some(run) = self.city.as_mut() {
+            for o in &mut run.ops {
+                o.alarm = 0.0;
+            }
+        }
+        self.enemies.retain(|e| !e.hunting);
+        for e in &mut self.enemies {
+            if e.is_soldier() {
+                e.st = Alert::Patrol;
+                e.det = 0.0;
+                e.see_t = 99.0;
+                e.cover = None;
+                e.pos = e.anchor;
+                e.path.clear();
+            }
+            if e.is_turret() {
+                e.st = Alert::Patrol;
+                e.det = 0.0;
+            }
+        }
+    }
+
+    /* ---------- oleadas ---------- */
+
+    fn start_wave(&mut self) {
+        self.wave += 1;
+        let w = self.wave;
+        let boss_wave = w % 5 == 0;
+        let n = ((3.0 + w as f32 * 1.5) * if boss_wave { 0.5 } else { 1.0 }).round() as u32;
+        let heavies = if boss_wave { 0 } else { w / 3 };
+        let kamis = if w >= 2 { w / 2 } else { 0 };
+        let mut q: Vec<DroneKind> = vec![DroneKind::Normal; n as usize];
+        for _ in 0..kamis {
+            let i = 1 + self.rng.idx(q.len());
+            q.insert(i.min(q.len()), DroneKind::Kami);
+        }
+        for _ in 0..heavies {
+            let i = self.rng.idx(q.len());
+            q.insert(i, DroneKind::Heavy);
+        }
+        if boss_wave {
+            q.insert(0, DroneKind::Boss);
+        }
+        self.spawn_queue = q;
+        self.spawn_timer = 0.4;
+        let mut extra = Vec::new();
+        if kamis > 0 {
+            extra.push(format!("{kamis} kamikaze{}", if kamis > 1 { "s" } else { "" }));
+        }
+        if heavies > 0 {
+            extra.push(format!("{heavies} pesado{}", if heavies > 1 { "s" } else { "" }));
+        }
+        if boss_wave {
+            let mut parts = vec!["Jefe entrante".to_string(), format!("{n} drones")];
+            parts.extend(extra);
+            self.banner(format!("OLEADA {w} · COLOSO"), parts.join(" · "));
+        } else {
+            let mut parts = vec![format!("{n} drones")];
+            parts.extend(extra);
+            self.banner(format!("OLEADA {w}"), parts.join(" · "));
+        }
+    }
+
+    fn spawn_drone(&mut self, d: DroneKind, world: &World, t: &Target) {
+        let a = world.a;
+        let mut x = 0.0;
+        let mut z = 0.0;
+        for _ in 0..60 {
+            x = self.rng.signed() * (a - 6.0);
+            z = self.rng.signed() * (a - 6.0);
+            let dd = (x - t.pos.x).hypot(z - t.pos.z);
+            if dd >= (a * 0.6).min(22.0) && dd <= 48.0 && world.box_at(Vec3::new(x, 3.0, z)).is_none() {
+                break;
+            }
+        }
+        let id = self.id();
+        let e = new_drone(id, d, Vec3::new(x, if d == DroneKind::Boss { 12.0 } else { 9.0 }, z), self.wave, &mut self.rng);
+        let color = drone_color(d);
+        self.burst(e.pos, color, if d == DroneKind::Boss { 40 } else { 14 }, if d == DroneKind::Boss { 9.0 } else { 5.0 }, 0.5);
+        if d == DroneKind::Boss {
+            self.boss = Some(id);
+        }
+        self.enemies.push(e);
+    }
+
+    /* ---------- daño ---------- */
+
+    /// Daña al enemigo `i`. Devuelve si lo mató. `dir` empuja a los drones.
+    pub fn damage(&mut self, i: usize, dmg: f32, dir: Option<Vec3>, crit: bool, body: Vec3, level: &mut Level) -> bool {
+        let e = &mut self.enemies[i];
+        if !e.alive() {
+            return false;
+        }
+        let shown = dmg.min(e.hp);
+        if let Some(n) = self.nums.iter_mut().find(|n| n.0 == e.id) {
+            n.1 += shown;
+            n.2 |= crit;
+        } else {
+            self.nums.push((e.id, shown, crit));
+        }
+        e.hp -= dmg;
+        e.flash = 0.07;
+        if (e.is_soldier() || e.is_turret()) && e.hp > 0.0 {
+            // herido: entra en combate y avisa a su puesto
+            e.st = Alert::Combat;
+            e.last_seen = body;
+            e.see_t = 0.0;
+            if e.is_soldier() {
+                e.react = e.react.min(0.3);
+            }
+            if let Some(op) = e.op {
+                self.raise_alarm(op, Some(body), level);
+            }
+        }
+        let e = &mut self.enemies[i];
+        if let Some(d) = dir {
+            let k = match e.drone() {
+                Some(DroneKind::Boss) => 0.15,
+                Some(DroneKind::Heavy) => 0.8,
+                Some(_) => 2.5,
+                None => 0.0,
+            };
+            e.vel += d * k * dmg.min(3.0);
+        }
+        if e.hp <= 0.0 {
+            self.kill(i, level);
+            return true;
+        }
+        false
+    }
+
+    fn kill(&mut self, i: usize, level: &mut Level) {
+        let e = self.enemies[i].clone();
+        self.kills += 1;
+        match e.kind {
+            Kind::Soldier(sk) => {
+                let stealth = e.op.and_then(|o| self.city.as_ref().map(|c| c.ops[o].alarm <= 0.0)).unwrap_or(false);
+                self.score += e.value + if stealth { 60 } else { 0 };
+                if stealth {
+                    if let Some(c) = self.city.as_mut() {
+                        c.stealth_kills += 1;
+                    }
+                }
+                let cid = self.id();
+                self.corpses.push(Corpse { id: cid, pos: e.pos, yaw: e.yaw, fall: if self.rng.next() < 0.5 { 1.0 } else { -1.0 }, t: 0.0, seen: false, reported: false, kind: sk });
+                if self.corpses.len() > 30 {
+                    self.corpses.remove(0);
+                }
+            }
+            Kind::Turret => {
+                self.score += e.value;
+                if let Some(c) = self.city.as_mut() {
+                    if let Some(k) = c.turret_cols.iter().position(|t| t.0 == e.id) {
+                        let (_, col) = c.turret_cols.remove(k);
+                        level.world.remove_collider(col);
+                    }
+                }
+                let p = e.pos + Vec3::Y * 1.9;
+                self.burst(p, 0xffb02e, 30, 8.0, 0.7);
+                self.burst(p, 0x2a2a2a, 14, 4.0, 1.2);
+                self.ev(GameEvent::Sound(Snd::Boom));
+                self.make_noise(e.pos, 60.0);
+            }
+            Kind::Drone(dk) => {
+                self.burst(e.pos, drone_color(dk), if dk == DroneKind::Heavy { 50 } else { 28 }, 9.0, 0.8);
+                self.burst(e.pos, 0x1b2226, 12, 6.0, 1.0);
+                self.ev(GameEvent::Sound(Snd::Kill));
+                self.combo = if self.combo_t > 0.0 { (self.combo + 1).min(5) } else { 1 };
+                self.combo_t = 3.0;
+                self.score += e.value * self.combo;
+            }
+        }
+        self.enemies[i].hp = 0.0;
+        if e.drone() == Some(DroneKind::Kami) {
+            // reacción en cadena contra otros drones
+            self.explode(Explosion { pos: e.pos, radius: 3.2, max_dmg: 3.0, self_dmg: 0.0, big: false, enemy: false }, None, level);
+        }
+        // puesto despejado: queda como punto de reabastecimiento
+        if let Some(op) = e.op.filter(|_| e.is_soldier()) {
+            let soldiers_left = self.enemies.iter().any(|u| u.op == Some(op) && u.alive() && u.is_soldier());
+            let newly = match self.city.as_mut() {
+                Some(run) if !run.ops[op].cleared && !soldiers_left => {
+                    run.ops[op].cleared = true;
+                    true
+                }
+                _ => false,
+            };
+            if newly {
+                let full = level.city.as_ref().map_or("", |c| c.outposts[op].full).to_string();
+                self.banner("PUESTO DESPEJADO", format!("{full}: ahora es punto de reabastecimiento"));
+            }
+        }
+        if self.mode == Mode::Waves {
+            if let Some(dk) = e.drone() {
+                if dk == DroneKind::Boss {
+                    self.boss = None;
+                    self.explode(Explosion { pos: e.pos, radius: 6.0, max_dmg: 4.0, self_dmg: 0.0, big: true, enemy: false }, None, level);
+                    self.orbs.push(Orb { pos: e.pos, life: 20.0, od: false });
+                    self.orbs.push(Orb { pos: e.pos + Vec3::X * 2.5, life: 20.0, od: true });
+                    self.banner("COLOSO DERRIBADO", format!("+{} puntos", e.value * self.combo));
+                } else if dk == DroneKind::Heavy || self.rng.next() < if dk == DroneKind::Kami { 0.1 } else { 0.3 } {
+                    self.orbs.push(Orb { pos: e.pos, life: 20.0, od: false });
+                } else if self.rng.next() < 0.05 {
+                    self.orbs.push(Orb { pos: e.pos, life: 20.0, od: true });
+                }
+            }
+        }
+    }
+
+    /// Explosión: daña enemigos según la distancia y, si toca, al jugador.
+    pub fn explode(&mut self, x: Explosion, body: Option<Vec3>, level: &mut Level) {
+        self.make_noise(x.pos, if x.big { 80.0 } else { 45.0 });
+        self.burst(x.pos, 0xffb02e, if x.big { 60 } else { 30 }, if x.big { 12.0 } else { 8.0 }, 0.7);
+        self.burst(x.pos, 0xff3d5a, if x.big { 24 } else { 12 }, 9.0, 0.6);
+        self.burst(x.pos, 0x2a2a2a, if x.big { 20 } else { 8 }, 5.0, 1.2);
+        self.ev(GameEvent::Boom { pos: x.pos, big: x.big });
+        if x.big {
+            self.ev(GameEvent::Sound(Snd::Boom));
+        }
+        let b = body.unwrap_or(Vec3::splat(1e6));
+        for i in (0..self.enemies.len()).rev() {
+            let e = &self.enemies[i];
+            if !e.alive() {
+                continue;
+            }
+            let d = e.pos.distance(x.pos);
+            if d < x.radius + e.radius {
+                let dmg = (x.max_dmg * (1.0 - d / (x.radius + e.radius))).round().max(1.0);
+                let dir = (e.pos - x.pos).normalize_or_zero();
+                self.damage(i, dmg, Some(dir), false, b, level);
+            }
+        }
+        if let Some(body) = body {
+            let pd = (body - Vec3::Y * 0.3).distance(x.pos);
+            self.ev(GameEvent::Shake((if x.big { 0.9 } else { 0.4 }) * (1.0 - pd / 20.0).max(0.0)));
+            if x.self_dmg > 0.0 && pd < x.radius {
+                self.ev(GameEvent::Hurt { dmg: (x.self_dmg * (1.0 - pd / x.radius)).round(), from: Some(x.pos) });
+            }
+        }
+    }
+
+    /// Disparo hitscan del jugador. `muzzle` es de dónde salen las trazadoras.
+    #[allow(clippy::too_many_arguments)]
+    pub fn player_fire(&mut self, pellets: &[Pellet], dmg: f32, pierce: bool, crit_mul: f32, muzzle: Vec3, body: Vec3, level: &mut Level) {
+        let (mut any_hit, mut any_kill, mut any_crit) = (false, false, false);
+        let tracer_color = if pierce { 0x5fd8ff } else { 0xffc66a };
+        for (k, p) in pellets.iter().enumerate() {
+            let wt = level.world.ray(p.origin, p.dir, 120.0);
+            let hits = ray_enemies(&self.enemies, p.origin, p.dir, wt, p.origin);
+            let mut end: Option<Vec3> = None;
+            let mut seen: Vec<usize> = Vec::new();
+            for h in hits {
+                if h.zone == HitZone::Shield {
+                    end = Some(h.point);
+                    self.burst(h.point, 0x9fe9ff, 6, 4.0, 0.25);
+                    self.ev(GameEvent::Sound(Snd::Ricochet));
+                    break;
+                }
+                if seen.contains(&h.enemy) || !self.enemies[h.enemy].alive() {
+                    continue;
+                }
+                seen.push(h.enemy);
+                let crit = h.zone == HitZone::Crit;
+                any_hit = true;
+                any_crit |= crit;
+                self.burst(h.point, if crit { 0xffb02e } else if pierce { 0x5fd8ff } else { 0xfff0e0 }, if crit { 8 } else if pierce { 14 } else { 4 }, 5.0, 0.25);
+                if self.damage(h.enemy, dmg * if crit { crit_mul } else { 1.0 }, Some(p.dir), crit, body, level) {
+                    any_kill = true;
+                }
+                if !pierce {
+                    end = Some(h.point);
+                    break;
+                }
+            }
+            if end.is_none() && wt < 120.0 {
+                let b = p.origin + p.dir * wt;
+                self.burst(b, if pierce { 0x5fd8ff } else { 0xffb02e }, if pierce { 10 } else { 3 }, 4.0, 0.3);
+                end = Some(b);
+            }
+            let end = end.unwrap_or(p.origin + p.dir * 80.0);
+            if pierce || k % 3 == 0 {
+                self.ev(GameEvent::Tracer { a: muzzle, b: end, color: tracer_color, life: if pierce { 0.18 } else { 0.05 } });
+            }
+        }
+        if any_kill {
+            self.ev(GameEvent::Mark(Mark::Kill));
+        } else if any_hit {
+            self.ev(GameEvent::Sound(if any_crit { Snd::Crit } else { Snd::Hit }));
+            self.ev(GameEvent::Mark(if any_crit { Mark::Crit } else { Mark::Hit }));
+        }
+    }
+
+    /// Reacciona a los eventos de armas del jugador que le importan a la partida.
+    pub fn weapon_events(&mut self, evs: &[WeaponEvent], crit_mul: f32, muzzle: Vec3, body: Vec3, level: &mut Level) {
+        for e in evs {
+            match e {
+                WeaponEvent::Fire { pellets, dmg, pierce, .. } => self.player_fire(pellets, *dmg, *pierce, crit_mul, muzzle, body, level),
+                WeaponEvent::Noise { pos, radius } => self.make_noise(*pos, *radius),
+                _ => {}
+            }
+        }
+    }
+
+    /* ---------- paso ---------- */
+
+    pub fn step(&mut self, level: &mut Level, t: &Target, hp_full: bool, dt: f32) {
+        self.time += dt;
+        if self.combo_t > 0.0 {
+            self.combo_t -= dt;
+            if self.combo_t <= 0.0 {
+                self.combo = 0;
+            }
+        }
+        match self.mode {
+            Mode::City => self.step_city(level, t, dt),
+            Mode::Waves => self.step_waves(level, t, dt),
+        }
+        self.step_enemies(level, t, dt);
+        self.step_shots(level, t, dt);
+        // granadas (las del jugador las mete el arsenal en `nades`)
+        let mut wev = Vec::new();
+        let enemies = &self.enemies;
+        update_nades(&mut self.nades, &level.world, dt, |p| enemies.iter().any(|e| e.alive() && e.pos.distance(p) < e.radius + 0.35), &mut wev);
+        for e in wev {
+            match e {
+                WeaponEvent::Explosion(x) => self.explode(x, Some(t.body), level),
+                WeaponEvent::Beep => {}
+                _ => {}
+            }
+        }
+        // cadáveres que caen
+        for c in &mut self.corpses {
+            if c.t < 0.5 {
+                c.t += dt;
+                let k = (c.t / 0.5).min(1.0);
+                c.pos.y = (c.pos.y - dt * 0.6).max(level.world.ground_at(c.pos.x, c.pos.z, c.pos.y + 0.2) + 0.15 * k);
+            }
+        }
+        // orbes
+        let mut picked = Vec::new();
+        for (i, o) in self.orbs.iter_mut().enumerate() {
+            o.life -= dt;
+            let near = (o.pos.x - t.pos.x).hypot(o.pos.z - t.pos.z) < 1.4;
+            if near && (o.od || !hp_full) {
+                picked.push(i);
+            }
+        }
+        for &i in picked.iter().rev() {
+            let o = self.orbs.remove(i);
+            self.ev(if o.od { GameEvent::Overdrive } else { GameEvent::Heal(25.0) });
+            self.burst(o.pos, if o.od { 0xffb02e } else { 0x5dffb0 }, if o.od { 20 } else { 14 }, 5.0, 0.5);
+            if o.od {
+                self.banner("SOBRECARGA", "Cadencia y daño aumentados por 8 s");
+            }
+            self.ev(GameEvent::Sound(Snd::Pickup));
+        }
+        self.orbs.retain(|o| o.life > 0.0);
+        // números de daño
+        for (id, v, crit) in std::mem::take(&mut self.nums) {
+            if let Some(e) = self.enemies.iter().find(|e| e.id == id) {
+                self.events.push(GameEvent::Num { pos: e.pos + Vec3::Y * (e.radius + 0.3 + if e.is_soldier() { 1.6 } else { 0.0 }), value: v, crit });
+            }
+        }
+        // limpiar muertos
+        if let Some(b) = self.boss {
+            if !self.enemies.iter().any(|e| e.id == b && e.alive()) {
+                self.boss = None;
+            }
+        }
+        self.enemies.retain(|e| e.alive());
+    }
+
+    fn step_city(&mut self, level: &mut Level, _t: &Target, dt: f32) {
+        let Some(run) = self.city.as_mut() else { return };
+        run.time += dt;
+        // alarma por puesto: se apaga si nadie te ve durante 32 s
+        let mut lost = Vec::new();
+        for (oi, o) in run.ops.iter_mut().enumerate() {
+            if o.alarm > 0.0 {
+                o.ever_alarm = true;
+                let seen = self.enemies.iter().any(|u| u.op == Some(oi) && u.alive() && u.visible && u.st == Alert::Combat);
+                if !seen {
+                    o.alarm -= dt;
+                }
+                if o.alarm <= 0.0 {
+                    lost.push(oi);
+                }
+            }
+        }
+        for oi in lost {
+            for u in self.enemies.iter_mut().filter(|u| u.op == Some(oi) && u.alive() && u.is_soldier() && u.st == Alert::Combat) {
+                u.st = Alert::Search;
+                u.target = Some(u.last_seen);
+                u.search_t = 14.0;
+                u.det = 0.5;
+                u.cover = None;
+            }
+            let full = level.city.as_ref().map_or("", |c| c.outposts[oi].full).to_string();
+            self.banner("BÚSQUEDA", format!("{full}: te perdieron el rastro"));
+        }
+        // refuerzos: drones cazadores cada 28 s mientras haya un puesto en alerta
+        let run = self.city.as_mut().unwrap();
+        let hot = run.ops.iter().position(|o| o.alarm > 0.0);
+        if let (Some(op), true, true) = (hot, run.antenna, run.drones) {
+            run.reinforce_t -= dt;
+            if run.reinforce_t <= 0.0 {
+                run.reinforce_t = 28.0;
+                let hunters = self.enemies.iter().filter(|e| e.hunting).count();
+                let (cx, cz) = level.city.as_ref().map(|c| (c.outposts[op].cx, c.outposts[op].cz)).unwrap_or((0.0, 0.0));
+                for i in 0..2 {
+                    if hunters + i >= 4 {
+                        break;
+                    }
+                    let id = self.id();
+                    let mut e = new_drone(id, DroneKind::Normal, Vec3::new(cx + (self.rng.f() - 0.5) * 30.0, 26.0, cz + (self.rng.f() - 0.5) * 30.0), 0, &mut self.rng);
+                    e.hunting = true;
+                    self.enemies.push(e);
+                }
+                self.banner("REFUERZOS", "Drones en camino. Destruí la antena para cortarlos.");
+            }
+        }
+    }
+
+    fn step_waves(&mut self, level: &mut Level, t: &Target, dt: f32) {
+        if !self.spawn_queue.is_empty() {
+            self.spawn_timer -= dt;
+            let cap = (6 + self.wave / 2).min(12) as usize;
+            if self.spawn_timer <= 0.0 && self.enemies.len() < cap {
+                let d = self.spawn_queue.remove(0);
+                self.spawn_drone(d, &level.world, t);
+                self.spawn_timer = (0.9 - self.wave as f32 * 0.04).max(0.35);
+            }
+        } else if self.enemies.is_empty() {
+            if self.intermission <= 0.0 {
+                if self.wave > 0 {
+                    let bonus = self.wave * 250;
+                    self.score += bonus;
+                    self.ev(GameEvent::Heal(20.0));
+                    self.banner("DESPEJADO", format!("+{bonus} bonus · +1 granada"));
+                }
+                self.intermission = if self.wave > 0 { 3.2 } else { 1.2 };
+            }
+            self.intermission -= dt;
+            if self.intermission <= 0.0 {
+                self.start_wave();
+                self.intermission = 0.0;
+            }
+        }
+    }
+
+    fn step_enemies(&mut self, level: &mut Level, t: &Target, dt: f32) {
+        let outposts: &[crate::city::Outpost] = level.city.as_ref().map_or(&[], |c| &c.outposts);
+        let ctx = Ctx { world: &level.world, outposts, nav: &self.nav, t, time: self.time, dt };
+        let powered = self.city.as_ref().is_none_or(|c| c.powered);
+        let lim = level.world.lim();
+        let drone_pos: Vec<Vec3> = self.enemies.iter().map(|e| if e.drone().is_some() && e.surv.is_none() { e.pos } else { Vec3::splat(1e6) }).collect();
+        let mut shooters = vec![0u32; outposts.len()];
+        for e in &self.enemies {
+            if let (Some(o), true) = (e.op, e.is_soldier() && e.alive() && e.burst > 0) {
+                shooters[o] += 1;
+            }
+        }
+        let mut ev = Vec::new();
+        let mut empty_ops: Vec<OpState> = Vec::new();
+        let ops = self.city.as_mut().map_or(&mut empty_ops, |c| &mut c.ops);
+        for i in 0..self.enemies.len() {
+            let e = &mut self.enemies[i];
+            if !e.alive() {
+                continue;
+            }
+            match e.kind {
+                Kind::Soldier(_) => {
+                    let mine = e.op.map_or(0, |o| shooters[o]) - u32::from(e.burst > 0);
+                    update_soldier(e, &ctx, ops, &mut self.corpses, mine, &mut self.rng, &mut ev);
+                }
+                Kind::Turret => update_turret(e, &ctx, powered, &mut self.rng, &mut ev),
+                Kind::Drone(_) if e.surv.is_some() => {
+                    update_surv(e, &ctx, &mut ev);
+                }
+                Kind::Drone(_) => update_drone(e, i, &ctx, &drone_pos, self.wave, lim, &mut self.rng, &mut ev),
+            }
+        }
+        for a in ev {
+            match a {
+                AiEvent::Shot { from, to, hit, dmg, big } => {
+                    let d = from.distance(t.body);
+                    if hit {
+                        self.ev(GameEvent::Hurt { dmg, from: Some(from) });
+                    } else if d < 30.0 {
+                        self.ev(GameEvent::Sound(Snd::Whiz));
+                    }
+                    self.ev(GameEvent::Tracer { a: from, b: to, color: 0xffc66a, life: 0.05 });
+                    self.ev(GameEvent::Sound(Snd::EShot { dist: d, big }));
+                    self.burst(from, 0xffd27a, 2, 2.0, 0.08);
+                }
+                AiEvent::DroneFire { from, vel, dmg, heavy } => self.shots.push(Shot { pos: from, vel, life: 5.0, dmg, from, heavy }),
+                AiEvent::DroneSfx { pos, boss } => self.ev(GameEvent::Sound(if boss { Snd::Boss } else { Snd::Enemy { dist: pos.distance(t.body) } })),
+                AiEvent::Nade { from, target } => self.nades.push(enemy_nade(from, target)),
+                AiEvent::Alarm { op, pos } => self.raise_alarm(op, pos, level),
+                AiEvent::Spotted => {
+                    let near = level.city.as_ref().and_then(|c| {
+                        let done = self.city.as_ref().map(|r| r.ops.iter().map(|o| o.done).collect::<Vec<_>>()).unwrap_or_default();
+                        c.outposts.iter().enumerate().filter(|(i, _)| !done.get(*i).copied().unwrap_or(false)).min_by(|a, b| (a.1.cx - t.pos.x).hypot(a.1.cz - t.pos.z).total_cmp(&(b.1.cx - t.pos.x).hypot(b.1.cz - t.pos.z))).map(|(i, _)| i)
+                    });
+                    if let Some(op) = near {
+                        self.raise_alarm(op, Some(t.body), level);
+                    }
+                    self.ev(GameEvent::Sound(Snd::AlertBeep));
+                }
+                AiEvent::KamiBoom { idx } => {
+                    if let Some(e) = self.enemies.get_mut(idx) {
+                        if e.alive() {
+                            e.hp = 0.0;
+                            let p = e.pos;
+                            self.explode(Explosion { pos: p, radius: 2.5, max_dmg: 2.0, self_dmg: 0.0, big: true, enemy: true }, Some(t.body), level);
+                            self.ev(GameEvent::Hurt { dmg: 14.0, from: Some(p) });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn step_shots(&mut self, level: &Level, t: &Target, dt: f32) {
+        let mut i = 0;
+        while i < self.shots.len() {
+            let s = &mut self.shots[i];
+            s.pos += s.vel * dt;
+            s.life -= dt;
+            let (pos, from, dmg) = (s.pos, s.from, s.dmg);
+            if s.life <= 0.0 {
+                self.shots.swap_remove(i);
+                continue;
+            }
+            if pos.distance_squared(t.body) < 0.45 {
+                self.burst(pos, 0xff3d5a, 8, 4.0, 0.3);
+                self.ev(GameEvent::Hurt { dmg, from: Some(from) });
+                self.shots.swap_remove(i);
+                continue;
+            }
+            if pos.y < 0.0 || level.world.box_at(pos).is_some() {
+                self.burst(pos, 0xff8060, 8, 4.0, 0.3);
+                self.shots.swap_remove(i);
+                continue;
+            }
+            i += 1;
+        }
+    }
+}
+
+pub fn drone_color(d: DroneKind) -> u32 {
+    match d {
+        DroneKind::Kami => 0xff6a2e,
+        DroneKind::Heavy => 0xffb02e,
+        _ => 0xff3d5a,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::maps::{MapId, build_level};
+
+    fn target(x: f32, z: f32) -> Target {
+        Target { pos: Vec3::new(x, 1.6, z), body: Vec3::new(x, 1.1, z), vel: Vec3::ZERO, feet: 0.0, crouch_t: 0.0, evasive: false }
+    }
+
+    #[test]
+    fn la_ciudad_arranca_con_sus_unidades() {
+        let mut l = build_level(MapId::Ciudad);
+        let g = Game::new(&mut l, 1);
+        let soldiers = g.enemies.iter().filter(|e| e.is_soldier()).count();
+        let turrets = g.enemies.iter().filter(|e| e.is_turret()).count();
+        // antena 4+1 francotirador, subestación 4, oficinas 4+1, arsenal 4, mando 5+1, obra 4+2, trenes 4+1
+        assert_eq!(soldiers, 5 + 4 + 5 + 4 + 6 + 6 + 5);
+        assert_eq!(turrets, 1 + 2 + 1 + 1 + 2 + 1 + 2);
+        assert_eq!(g.enemies.iter().filter(|e| e.surv.is_some()).count(), 5);
+    }
+
+    #[test]
+    fn plantado_frente_al_mando_te_detectan_y_disparan() {
+        let mut l = build_level(MapId::Ciudad);
+        let mut g = Game::new(&mut l, 1);
+        // en la puerta sur del mando, a la vista
+        let t = target(0.0, 14.0);
+        let mut hurt = 0.0;
+        for _ in 0..(60 * 20) {
+            g.step(&mut l, &t, true, crate::TICK);
+            for e in g.events.drain(..) {
+                if let GameEvent::Hurt { dmg, .. } = e {
+                    hurt += dmg;
+                }
+            }
+        }
+        assert!(g.city.as_ref().unwrap().ops.iter().any(|o| o.ever_alarm), "nadie dio la alarma");
+        assert!(hurt > 0.0, "nadie disparó");
+    }
+
+    #[test]
+    fn oleadas_arrancan_y_se_limpian() {
+        let mut l = build_level(MapId::Deposito);
+        let mut g = Game::new(&mut l, 3);
+        let t = target(0.0, 24.0);
+        for _ in 0..(60 * 3) {
+            g.step(&mut l, &t, true, crate::TICK);
+        }
+        assert_eq!(g.wave, 1);
+        assert!(!g.enemies.is_empty());
+        // matar todo con explosiones
+        for _ in 0..200 {
+            if g.enemies.is_empty() && g.spawn_queue.is_empty() {
+                break;
+            }
+            let idx: Vec<usize> = (0..g.enemies.len()).collect();
+            for i in idx.into_iter().rev() {
+                if i < g.enemies.len() {
+                    g.damage(i, 100.0, None, false, t.body, &mut l);
+                }
+            }
+            g.step(&mut l, &t, true, crate::TICK);
+        }
+        // la oleada 1 trae round(3 + 1,5) = 5 drones
+        assert!(g.kills >= 5, "bajas: {}", g.kills);
+        assert!(g.score > 0);
+    }
+}

@@ -1,7 +1,7 @@
 //! Efectos: partículas (`11-particulas`), trazadoras (`12-trazadoras`), luz de explosiones y
 //! granadas en vuelo. Los sistemas de juego encolan pedidos en `Fx` y acá se dibujan.
 
-use crate::player::LocalPlayer;
+use crate::game::GameRes;
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -157,9 +157,9 @@ fn update_boom(time: Res<Time>, mut fx: ResMut<Fx>, mut q: Query<(&mut PointLigh
     }
 }
 
-fn sync_nades(lp: Res<LocalPlayer>, time: Res<Time>, mut q: Query<(&NadeVis, &mut Transform, &mut Visibility)>) {
+fn sync_nades(game: Res<GameRes>, time: Res<Time>, mut q: Query<(&NadeVis, &mut Transform, &mut Visibility)>) {
     for (n, mut t, mut v) in &mut q {
-        match lp.nades.get(n.0) {
+        match game.0.nades.get(n.0) {
             Some(nd) => {
                 t.translation = nd.pos;
                 t.rotation = Quat::from_rotation_x(time.elapsed_secs() * nd.vel.z * 3.0) * Quat::from_rotation_z(-time.elapsed_secs() * nd.vel.x * 3.0);
