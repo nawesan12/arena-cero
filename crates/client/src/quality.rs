@@ -75,7 +75,8 @@ pub struct QualityPlugin;
 impl Plugin for QualityPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(QualityRes { q: load(), fog: [30.0, 120.0], dirty: true })
-            .add_systems(Update, (switch_quality, apply_quality).chain())
+            .insert_resource(BloomOn(crate::config::get("brillo").is_some_and(|v| v == "1")))
+            .add_systems(Update, (switch_quality, apply_quality, toggle_bloom, apply_bloom).chain())
             .add_systems(Last, frame_cap);
     }
 }
@@ -122,6 +123,44 @@ fn apply_quality(mut q: ResMut<QualityRes>, mut shadow: ResMut<DirectionalLightS
         *m = p.msaa;
     }
     q.dirty = false;
+}
+
+/// Brillo (bloom) sí/no con F5. Apagado de entrada: pide HDR en las dos cámaras y la Radeon
+/// lo siente; además cambia el aspecto, así que es opcional.
+#[derive(Resource)]
+pub struct BloomOn(pub bool);
+
+fn toggle_bloom(key: Res<ButtonInput<KeyCode>>, mut on: ResMut<BloomOn>, mut ui: ResMut<crate::game::UiFeed>) {
+    if key.just_pressed(KeyCode::F5) {
+        on.0 = !on.0;
+        crate::config::set("brillo", if on.0 { "1" } else { "0" });
+        ui.banner(if on.0 { "BRILLO ACTIVADO" } else { "BRILLO DESACTIVADO" }, "F5 cambia");
+    }
+}
+
+/// Las dos cámaras (mundo y arma) dibujan sobre la misma imagen: tienen que ser las dos HDR o ninguna.
+fn apply_bloom(mut commands: Commands, on: Res<BloomOn>, main: Query<Entity, With<MainCamera>>, gun: Query<Entity, With<crate::gun::GunCamera>>, mut done: Local<Option<(bool, usize)>>) {
+    let n = main.iter().count() + gun.iter().count();
+    if *done == Some((on.0, n)) {
+        return;
+    }
+    *done = Some((on.0, n));
+    use bevy::camera::Hdr;
+    use bevy::post_process::bloom::{Bloom, BloomPrefilter};
+    for e in &main {
+        if on.0 {
+            commands.entity(e).insert((Hdr, Bloom { intensity: 0.12, prefilter: BloomPrefilter { threshold: 0.8, threshold_softness: 0.4 }, ..Bloom::NATURAL }));
+        } else {
+            commands.entity(e).remove::<(Bloom, Hdr)>();
+        }
+    }
+    for e in &gun {
+        if on.0 {
+            commands.entity(e).insert(Hdr);
+        } else {
+            commands.entity(e).remove::<Hdr>();
+        }
+    }
 }
 
 /// FPS cuando no se está jugando (mouse suelto o ventana sin foco), como los menús de la web.

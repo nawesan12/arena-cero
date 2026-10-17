@@ -75,10 +75,18 @@ dinámicas, economía, tienda, gadgets, día y noche, Ciudad 2.0, subte, peatone
 - Decorado nuevo y solo visual (no consume el RNG de la ciudad): carteles publicitarios y neón en azoteas; pallets
   en el Puerto, bolardos y macetas en el Centro Financiero, cercos en el Barrio Jardín, tachos y cajones en El Cerro.
 
+## Oleadas encadenadas, muertes y brillo (17/10/2026)
+
+- Oleadas: cada 3 oleadas despejadas se pasa a la próxima arena (Depósito → Cantera → Fundición → Azotea) sin
+  salir del juego, con puntaje, mejoras, armas y vida (`Game::next_arena`, `arena_cycle.rs`).
+- Muertes según el golpe: de espaldas hacia donde empujó la bala (más fuerte si fue crítico), se desploma si fue
+  un derribo, sale despedido y girando si fue una explosión (el cuerpo se arrastra sin atravesar paredes).
+- Brillo (bloom) opcional con F5, apagado de entrada (pone HDR en las dos cámaras).
+- Partículas en un pool fijo de 600 en vez de crear y borrar una entidad por partícula.
+
 ## Lo que sigue
 
-- Bloom (necesita HDR en las dos cámaras y ajustarlo mirando la pantalla; queda para cuando se pueda revisar en vivo).
-- Muertes variadas y ragdoll; nombres de calles.
-- Oleadas: cambio de mapa cada 3 oleadas sin reiniciar el juego.
+- Ajustar el brillo, la campaña y las rachas jugando.
+- Nombres de calles; ragdoll de verdad.
 - Etapa online: servidor autoritativo (`arena_sim` headless), cuentas, ranking validado y cooperativo 2-4.
 - Arte: modelos glTF para reemplazar los procedurales.

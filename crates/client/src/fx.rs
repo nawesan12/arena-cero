@@ -95,30 +95,62 @@ fn setup_fx(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: 
     }
 }
 
-fn spawn_bursts(mut commands: Commands, mut fx: ResMut<Fx>, mut assets: ResMut<FxAssets>, mut mats: ResMut<Assets<StandardMaterial>>, alive: Query<(), With<Particle>>) {
-    let mut count = alive.iter().count();
+/// Partículas en un pool fijo de `MAXP` entidades ocultas que se reciclan (antes cada partícula
+/// era una entidad nueva que se creaba y se borraba: cientos por explosión).
+fn spawn_bursts(
+    mut commands: Commands,
+    mut fx: ResMut<Fx>,
+    mut assets: ResMut<FxAssets>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    mut pool: Local<Vec<Entity>>,
+    mut next: Local<usize>,
+    mut q: Query<(&mut Transform, &mut Particle, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>)>,
+) {
+    if pool.is_empty() {
+        let mat = assets.mats.entry(0xffffff).or_insert_with(|| mats.add(StandardMaterial { base_color: Color::WHITE, unlit: true, ..default() })).clone();
+        for _ in 0..MAXP {
+            pool.push(commands.spawn((Mesh3d(assets.cube.clone()), MeshMaterial3d(mat.clone()), Transform::default(), Visibility::Hidden, Particle { vel: Vec3::ZERO, life: 0.0, max: 1.0 }, NotShadowCaster)).id());
+        }
+        return;
+    }
     let bursts = std::mem::take(&mut fx.bursts);
     for b in bursts {
         let mat = assets.mats.entry(b.color).or_insert_with(|| mats.add(StandardMaterial { base_color: crate::world_render::col(b.color), unlit: true, ..default() })).clone();
         for _ in 0..b.n {
-            if count >= MAXP {
-                return;
+            // busca un lugar libre; si están todos ocupados, pisa al más viejo de la ronda
+            let mut slot = *next % MAXP;
+            for k in 0..MAXP {
+                let i = (*next + k) % MAXP;
+                if q.get(pool[i]).is_ok_and(|(_, p, _, _)| p.life <= 0.0) {
+                    slot = i;
+                    break;
+                }
             }
-            count += 1;
+            *next = slot + 1;
             let v = Vec3::new(fx.rand() - 0.5, fx.rand() - 0.2, fx.rand() - 0.5);
             let s = b.speed * (0.4 + fx.rand() * 0.8) / v.length().max(1e-3);
             let life = b.life * (0.6 + fx.rand() * 0.6);
-            commands.spawn((Mesh3d(assets.cube.clone()), MeshMaterial3d(mat.clone()), Transform::from_translation(b.pos), Particle { vel: v * s, life, max: life }, NotShadowCaster));
+            if let Ok((mut t, mut p, mut vis, mut m)) = q.get_mut(pool[slot]) {
+                *t = Transform::from_translation(b.pos);
+                *p = Particle { vel: v * s, life, max: life };
+                *vis = Visibility::Inherited;
+                if m.0 != mat {
+                    m.0 = mat.clone();
+                }
+            }
         }
     }
 }
 
-fn update_particles(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mut Transform, &mut Particle)>) {
+fn update_particles(time: Res<Time>, mut q: Query<(&mut Transform, &mut Particle, &mut Visibility)>) {
     let dt = time.delta_secs();
-    for (e, mut t, mut p) in &mut q {
+    for (mut t, mut p, mut vis) in &mut q {
+        if p.life <= 0.0 {
+            continue;
+        }
         p.life -= dt;
         if p.life <= 0.0 {
-            commands.entity(e).despawn();
+            *vis = Visibility::Hidden;
             continue;
         }
         p.vel.y -= 14.0 * dt;

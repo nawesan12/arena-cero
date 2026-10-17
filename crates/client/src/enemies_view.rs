@@ -493,9 +493,32 @@ fn sync_corpses(mut commands: Commands, game: Res<GameRes>, look: Res<Look>, mut
     });
     for (_, cv, mut t) in &mut q {
         if let Some(c) = g.corpses.iter().find(|c| c.id == cv.0) {
-            let k = (c.t / 0.5).min(1.0);
             t.translation = c.pos;
-            t.rotation = Quat::from_rotation_y(c.yaw) * Quat::from_rotation_x(-k * PI / 2.0 * c.fall * 0.98);
+            t.rotation = corpse_pose(c);
+        }
+    }
+}
+
+/// Cómo cae cada uno: de espaldas hacia donde lo empujó la bala (rápido si fue crítico), se
+/// desploma de a poco si fue un derribo, o sale girando si lo agarró una explosión.
+fn corpse_pose(c: &arena_sim::enemies::Corpse) -> Quat {
+    let base = Quat::from_rotation_y(c.yaw);
+    let ease = |x: f32| 1.0 - (1.0 - x.clamp(0.0, 1.0)).powi(3);
+    if c.dir == Vec3::ZERO || c.style == 1 {
+        // derribo: primero se le aflojan las piernas, después cae de costado
+        let k = if c.t < 0.3 { c.t / 0.3 * 0.25 } else { 0.25 + ease((c.t - 0.3) / 0.35) * 0.75 };
+        return base * Quat::from_rotation_x(-k * PI / 2.0 * c.fall * 0.98);
+    }
+    let axis = Vec3::Y.cross(c.dir).normalize_or(Vec3::X);
+    match c.style {
+        2 => {
+            let k = ease(c.t / 0.35);
+            let roll = Quat::from_axis_angle(c.dir, k * 0.7 * c.fall);
+            Quat::from_axis_angle(axis, k * PI / 2.0 * 0.98) * roll * base
+        }
+        _ => {
+            let k = ease(c.t / 0.45);
+            Quat::from_axis_angle(axis, k * PI / 2.0 * 0.98) * Quat::from_rotation_y(c.fall * 0.15 * k) * base
         }
     }
 }

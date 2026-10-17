@@ -21,6 +21,10 @@ pub struct LevelRes(pub Level);
 #[derive(Component)]
 pub struct LevelEntity;
 
+/// Lo que arma `spawn_level` (mallas del mapa, cielo, sol): se reemplaza al cambiar de arena.
+#[derive(Component)]
+pub struct Geometry;
+
 /// El domo de cielo y el sol siguen a la cámara.
 #[derive(Component)]
 pub struct SkyDome;
@@ -189,7 +193,7 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
     }
     for ((m, shadow, _, _), buf) in batches {
         let look = looks.get(m, mats).mat.clone();
-        let mut e = commands.spawn((Mesh3d(meshes.add(buf.into_mesh())), MeshMaterial3d(look), Transform::IDENTITY, LevelEntity));
+        let mut e = commands.spawn((Mesh3d(meshes.add(buf.into_mesh())), MeshMaterial3d(look), Transform::IDENTITY, LevelEntity, Geometry));
         if !shadow {
             e.insert(NotShadowCaster);
         }
@@ -202,7 +206,7 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
             by_mat.entry(*mat).or_default().push_box(*center, *size, None);
         }
         commands
-            .spawn((Transform::from_translation(g.origin), Visibility::default(), GroupVisual(gi), LevelEntity))
+            .spawn((Transform::from_translation(g.origin), Visibility::default(), GroupVisual(gi), LevelEntity, Geometry))
             .with_children(|p| {
                 for (m, buf) in by_mat {
                     p.spawn((Mesh3d(meshes.add(buf.into_mesh())), MeshMaterial3d(looks.get(m, mats).mat.clone())));
@@ -218,7 +222,7 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
             CylAxis::X => Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
             CylAxis::Z => Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
         };
-        commands.spawn((Mesh3d(mesh), MeshMaterial3d(looks.get(cy.mat, mats).mat.clone()), Transform::from_translation(cy.center).with_rotation(rot), LevelEntity));
+        commands.spawn((Mesh3d(mesh), MeshMaterial3d(looks.get(cy.mat, mats).mat.clone()), Transform::from_translation(cy.center).with_rotation(rot), LevelEntity, Geometry));
     }
 
     // skyline girado de la azotea
@@ -229,7 +233,7 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
             MeshMaterial3d(looks.get(rb.mat, mats).mat.clone()),
             Transform::from_translation(rb.center).with_rotation(Quat::from_rotation_y(rb.yaw)).with_scale(rb.size),
             NotShadowCaster,
-            LevelEntity,
+            LevelEntity, Geometry,
         ));
     }
 
@@ -252,13 +256,13 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
             }
         }
         for (_, m) in zones {
-            commands.spawn((Mesh3d(meshes.add(m)), MeshMaterial3d(looks.foliage.clone()), Transform::IDENTITY, LevelEntity));
+            commands.spawn((Mesh3d(meshes.add(m)), MeshMaterial3d(looks.foliage.clone()), Transform::IDENTITY, LevelEntity, Geometry));
         }
     }
 
     // piso
     let floor = looks.floor(info.floor_tex, info.floor, a, mats);
-    commands.spawn((Mesh3d(meshes.add(floor_mesh(a, &w.holes))), MeshMaterial3d(floor), Transform::IDENTITY, NotShadowCaster, LevelEntity));
+    commands.spawn((Mesh3d(meshes.add(floor_mesh(a, &w.holes))), MeshMaterial3d(floor), Transform::IDENTITY, NotShadowCaster, LevelEntity, Geometry));
 
     // cielo y sol
     let sun_dir = level.sun_pos().normalize();
@@ -266,10 +270,10 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
         let city = info.sky == Sky::City;
         let r = if city { 330.0 } else { 190.0 };
         let sky = mats.add(StandardMaterial { base_color_texture: Some(looks.sky(city)), unlit: true, fog_enabled: false, cull_mode: None, ..default() });
-        commands.spawn((Mesh3d(meshes.add(sky_mesh(r))), MeshMaterial3d(sky), Transform::IDENTITY, NotShadowCaster, SkyDome, LevelEntity));
+        commands.spawn((Mesh3d(meshes.add(sky_mesh(r))), MeshMaterial3d(sky), Transform::IDENTITY, NotShadowCaster, SkyDome, LevelEntity, Geometry));
         let disc = mats.add(StandardMaterial { base_color: col(if city { 0xfff1d0 } else { 0xfff4d6 }), unlit: true, fog_enabled: false, ..default() });
         let (dr, dd) = if city { (10.0, 320.0) } else { (7.0, 180.0) };
-        commands.spawn((Mesh3d(meshes.add(Sphere::new(dr).mesh().uv(16, 12))), MeshMaterial3d(disc), Transform::from_translation(sun_dir * dd), NotShadowCaster, SunDisc(sun_dir * dd), LevelEntity));
+        commands.spawn((Mesh3d(meshes.add(Sphere::new(dr).mesh().uv(16, 12))), MeshMaterial3d(disc), Transform::from_translation(sun_dir * dd), NotShadowCaster, SunDisc(sun_dir * dd), LevelEntity, Geometry));
     }
 
     // luces. La web usaba luces "de artista" de three.js r128; con la exposición por defecto de
@@ -281,7 +285,7 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
         Transform::from_translation(level.sun_pos()).looking_at(Vec3::ZERO, Vec3::Y),
         cascades,
         WorldSun,
-        LevelEntity,
+        LevelEntity, Geometry,
     ));
     let (sky_c, ground_c, hemi_i) = info.hemi;
     let (s, g) = (col(sky_c).to_linear(), col(ground_c).to_linear());

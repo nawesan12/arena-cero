@@ -12,7 +12,7 @@ oleadas, salir). En pausa (Esc), Enter vuelve al menú.
 |---|---|---|
 | **Campaña** | menú, o `arena-cero --op 1-8` | Ocho operaciones armadas a mano, con radio, puntos de control y rango. |
 | **Distrito Sur** (mundo libre) | menú, o `arena-cero --libre` | Mundo abierto de 590 m. Siete objetivos en el centro, cuatro barrios alrededor, misiones dinámicas, economía, vehículos, subte, día y noche. |
-| **Oleadas** | `arena-cero --map deposito` (también `fundicion`, `cantera`, `azotea`) | Arenas cerradas con oleadas de drones, jefe cada 5 oleadas y mejoras entre oleadas. |
+| **Oleadas** | menú, o `arena-cero --map deposito` (también `fundicion`, `cantera`, `azotea`) | Arenas cerradas con oleadas de drones, jefe cada 5 oleadas y mejoras entre oleadas. Cada 3 oleadas se pasa a la próxima arena sin perder nada. |
 
 ## Controles
 
@@ -37,6 +37,7 @@ oleadas, salir). En pausa (Esc), Enter vuelve al menú.
 | M | Música sí/no |
 | F1 F2 F3 | Calidad baja / media / alta |
 | F4 | Mostrar FPS |
+| F5 | Brillo (bloom) sí/no |
 | Esc | Pausa (pantalla con los controles) |
 
 ## Campaña de operaciones

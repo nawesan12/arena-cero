@@ -401,6 +401,7 @@ fn spawn_hud(mut commands: Commands, mut font_assets: ResMut<Assets<Font>>, mut 
                     ("M", "Música"),
                     ("F1 F2 F3", "Calidad baja · media · alta"),
                     ("F4", "Mostrar FPS"),
+                    ("F5", "Brillo (bloom) sí/no"),
                     ("ESC", "Pausa"),
                 ] {
                     g.spawn((Node { padding: UiRect::axes(px(7), px(2)), border: UiRect::all(px(1)), justify_self: JustifySelf::Start, ..default() }, BorderColor::all(INK.with_alpha(0.25)))).with_children(|kb| {

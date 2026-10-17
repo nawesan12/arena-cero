@@ -200,6 +200,8 @@ pub struct Game {
     pub takedowns: u32,
     /// Apagón: los faroles no se prenden (lo lee el cliente).
     pub blackout: bool,
+    /// Dentro de una explosión (los que mueren salen despedidos).
+    blasting: bool,
 }
 
 impl Game {
@@ -249,6 +251,7 @@ impl Game {
             crits: 0,
             takedowns: 0,
             blackout: false,
+            blasting: false,
         };
         if let Some(c) = level.city.as_ref() {
             let n_st = c.stations.len();
@@ -260,6 +263,18 @@ impl Game {
             g.init_trains(n_st);
             g.director.enabled = setup.director;
         }
+        g
+    }
+
+    /// Oleadas: la partida sigue en otra arena con el mismo puntaje, bajas y número de oleada;
+    /// la próxima oleada arranca después de una pausa corta.
+    pub fn next_arena(level: &mut Level, old: &Game) -> Game {
+        let mut g = Game::new(level, 7 + old.wave);
+        g.score = old.score;
+        g.kills = old.kills;
+        g.wave = old.wave;
+        g.crits = old.crits;
+        g.intermission = 3.0;
         g
     }
 
@@ -556,6 +571,8 @@ impl Game {
         }
         e.hp -= dmg;
         e.flash = 0.07;
+        e.hit_dir = dir.map_or(Vec3::ZERO, |d| d.with_y(0.0).normalize_or_zero());
+        e.hit_force = if self.blasting { 7.0 } else if crit { 2.6 } else if dir.is_some() { 1.3 } else { 0.0 };
         if (e.is_soldier() || e.is_turret()) && e.hp > 0.0 {
             // herido: entra en combate y avisa a su puesto
             e.st = Alert::Combat;
@@ -614,7 +631,9 @@ impl Game {
                     }
                 }
                 let cid = self.id();
-                self.corpses.push(Corpse { id: cid, pos: e.pos, yaw: e.yaw, fall: if self.rng.next() < 0.5 { 1.0 } else { -1.0 }, t: 0.0, seen: false, reported: false, kind: sk });
+                let fall = if self.rng.next() < 0.5 { 1.0 } else { -1.0 };
+                let style = if e.hit_force >= 5.0 { 2 } else if e.hit_force <= 0.0 { 1 } else { 0 };
+                self.corpses.push(Corpse { id: cid, pos: e.pos, yaw: e.yaw, fall, dir: e.hit_dir, push: e.hit_force, style, t: 0.0, seen: false, reported: false, kind: sk });
                 if self.corpses.len() > 30 {
                     self.corpses.remove(0);
                 }
@@ -701,6 +720,7 @@ impl Game {
             self.ev(GameEvent::Sound(Snd::Boom));
         }
         let b = body.unwrap_or(Vec3::splat(1e6));
+        self.blasting = true;
         for i in (0..self.enemies.len()).rev() {
             let e = &self.enemies[i];
             if !e.alive() {
@@ -713,6 +733,7 @@ impl Game {
                 self.damage(i, dmg, Some(dir), false, b, level);
             }
         }
+        self.blasting = false;
         for pi in 0..self.people.len() {
             if self.people[pi].alive && self.people[pi].pos.distance(x.pos) < x.radius * 0.8 {
                 self.hurt_person(pi);
@@ -869,10 +890,21 @@ impl Game {
         self.step_director(level, t.pos, dt);
         self.step_trains(level, Vec3::new(t.pos.x, t.feet, t.pos.z), dt);
         self.step_enemy_cars(level, t.pos, t.body, t.light, dt);
-        // cadáveres que caen
+        // cadáveres que caen: el envión del golpe los arrastra (sin atravesar paredes)
         for c in &mut self.corpses {
-            if c.t < 0.5 {
+            if c.t < 0.7 {
                 c.t += dt;
+                if c.push > 0.0 && c.dir != Vec3::ZERO {
+                    let step = c.dir * c.push * dt;
+                    let next = c.pos + step;
+                    if level.world.box_at(next + Vec3::Y * 0.6).is_none() {
+                        c.pos.x = next.x;
+                        c.pos.z = next.z;
+                    } else {
+                        c.push = 0.0;
+                    }
+                    c.push = (c.push - dt * if c.style == 2 { 9.0 } else { 6.0 }).max(0.0);
+                }
                 let k = (c.t / 0.5).min(1.0);
                 c.pos.y = (c.pos.y - dt * 0.6).max(level.world.ground_at(c.pos.x, c.pos.z, c.pos.y + 0.2) + 0.15 * k);
             }
@@ -1128,6 +1160,23 @@ pub fn drone_color(d: DroneKind) -> u32 {
 mod tests {
     use super::*;
     use crate::maps::{MapId, build_level};
+
+    #[test]
+    fn la_siguiente_arena_sigue_la_cuenta() {
+        let mut l = build_level(MapId::Deposito);
+        let mut g = Game::new(&mut l, 7);
+        g.wave = 3;
+        g.score = 1234;
+        let mut l2 = build_level(MapId::Fundicion);
+        let mut g2 = Game::next_arena(&mut l2, &g);
+        assert_eq!((g2.wave, g2.score), (3, 1234));
+        let t = target(0.0, 0.0);
+        for _ in 0..(4.0 / crate::TICK) as usize {
+            g2.step(&mut l2, &t, true, crate::TICK);
+        }
+        assert_eq!(g2.wave, 4, "arranca la oleada 4 en la arena nueva");
+        assert!(!g2.events.iter().any(|e| matches!(e, GameEvent::WaveCleared)), "sin bono repetido");
+    }
 
     #[test]
     fn normal_de_la_pared_y_el_piso() {

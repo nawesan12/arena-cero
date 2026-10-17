@@ -63,6 +63,9 @@ pub struct Enemy {
     pub flash: f32,
     pub fire_cd: f32,
     pub tagged: bool,
+    /// Último golpe: dirección y fuerza (para cómo cae al morir).
+    pub hit_dir: Vec3,
+    pub hit_force: f32,
     /// Puesto al que pertenece (ciudad).
     pub op: Option<usize>,
     // drones
@@ -126,6 +129,8 @@ impl Enemy {
             flash: 0.0,
             fire_cd: 1.0,
             tagged: false,
+            hit_dir: Vec3::ZERO,
+            hit_force: 0.0,
             op: None,
             speed: 0.0,
             flank: 0.0,
@@ -584,6 +589,12 @@ pub struct Corpse {
     pub pos: Vec3,
     pub yaw: f32,
     pub fall: f32,
+    /// Hacia dónde cae (horizontal, unitario) y con cuánto envión sale despedido (m/s).
+    /// Cero: cae para un costado como antes (derribo).
+    pub dir: Vec3,
+    pub push: f32,
+    /// 0 cae seco, 1 se desploma de rodillas (derribo), 2 sale volando (explosión).
+    pub style: u8,
     pub t: f32,
     pub seen: bool,
     pub reported: bool,
