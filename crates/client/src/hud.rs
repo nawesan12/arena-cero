@@ -33,11 +33,23 @@ struct Help;
 #[derive(Component)]
 struct CrossBar(usize);
 
-fn label(text: &str, size: f32, color: Color) -> impl Bundle {
-    (Text::new(text), TextFont { font_size: size.into(), ..default() }, TextColor(color))
+/// Fuentes de la web: Saira Condensed para títulos y Share Tech Mono para números.
+#[derive(Resource, Clone)]
+pub struct Fonts {
+    pub display: Handle<Font>,
+    pub mono: Handle<Font>,
 }
 
-fn spawn_hud(mut commands: Commands) {
+fn label(text: &str, size: f32, color: Color, font: &Handle<Font>) -> impl Bundle {
+    (Text::new(text), TextFont { font: FontSource::Handle(font.clone()), font_size: size.into(), ..default() }, TextColor(color))
+}
+
+fn spawn_hud(mut commands: Commands, mut font_assets: ResMut<Assets<Font>>) {
+    let f = Fonts {
+        display: font_assets.add(Font::from_bytes(include_bytes!("../assets/fonts/SairaCondensed-Bold.ttf").to_vec())),
+        mono: font_assets.add(Font::from_bytes(include_bytes!("../assets/fonts/ShareTechMono-Regular.ttf").to_vec())),
+    };
+    commands.insert_resource(f.clone());
     // cruz: cuatro trazos que se abren con el movimiento
     commands.spawn((Node { position_type: PositionType::Absolute, left: percent(50), top: percent(50), ..default() },)).with_children(|p| {
         for i in 0..4 {
@@ -48,25 +60,25 @@ fn spawn_hud(mut commands: Commands) {
     });
     // arriba a la izquierda
     commands.spawn(Node { position_type: PositionType::Absolute, left: px(16), top: px(14), flex_direction: FlexDirection::Column, ..default() }).with_children(|p| {
-        p.spawn((label("", 14.0, DIM), Info));
+        p.spawn((label("", 14.0, DIM, &f.mono), Info));
     });
     // abajo a la izquierda: postura y dash
     commands.spawn(Node { position_type: PositionType::Absolute, left: px(16), bottom: px(16), flex_direction: FlexDirection::Column, row_gap: px(6), ..default() }).with_children(|p| {
-        p.spawn(label("INTEGRIDAD", 12.0, DIM));
-        p.spawn(label("100", 44.0, INK));
-        p.spawn((label("", 12.0, AMBER), Stance));
+        p.spawn(label("INTEGRIDAD", 12.0, DIM, &f.display));
+        p.spawn(label("100", 44.0, INK, &f.mono));
+        p.spawn((label("", 12.0, AMBER, &f.display), Stance));
         p.spawn(Node { flex_direction: FlexDirection::Row, column_gap: px(8), align_items: AlignItems::Center, ..default() }).with_children(|r| {
-            r.spawn(label("Q DASH", 12.0, DIM));
+            r.spawn(label("Q DASH", 12.0, DIM, &f.display));
             r.spawn((Node { width: px(90), height: px(4), ..default() }, BackgroundColor(Color::WHITE.with_alpha(0.1)))).with_children(|b| {
                 b.spawn((Node { width: percent(100), height: percent(100), ..default() }, BackgroundColor(CYAN), DashFill));
             });
         });
     });
-    commands.spawn((Node { position_type: PositionType::Absolute, bottom: px(8), left: percent(50), ..default() }, label("", 11.0, DIM), Fps));
+    commands.spawn((Node { position_type: PositionType::Absolute, bottom: px(8), left: percent(50), ..default() }, label("", 11.0, DIM, &f.mono), Fps));
     commands.spawn((
         Node { position_type: PositionType::Absolute, top: percent(38), width: percent(100), justify_content: JustifyContent::Center, ..default() },
-        label("Click para jugar · WASD moverse · Shift correr · C agacharse/deslizar · Espacio saltar (doble) · Q dash · E o Ctrl gancho · Clic derecho apuntar · Esc suelta el mouse", 15.0, INK),
-        TextLayout::new_with_justify(Justify::Center),
+        label("Click para jugar · WASD moverse · Shift correr · C agacharse/deslizar · Espacio saltar (doble) · Q dash · E o Ctrl gancho · Clic derecho apuntar · Esc suelta el mouse", 15.0, INK, &f.display),
+        TextLayout::justify(Justify::Center),
         Help,
     ));
 }

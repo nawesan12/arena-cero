@@ -1,6 +1,6 @@
 /// Materiales del mundo. La simulación solo los etiqueta; el cliente decide cómo se ven
 /// (color, textura procedural, rugosidad, UV en metros).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Mat {
     Wall,
     Pillar,

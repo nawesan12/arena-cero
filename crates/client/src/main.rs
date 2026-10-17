@@ -6,6 +6,7 @@
 mod hud;
 mod materials;
 mod player;
+mod quality;
 mod textures;
 mod world_render;
 
@@ -57,13 +58,13 @@ fn main() {
             ..default()
         }))
         .insert_resource(args)
-        .add_plugins((player::PlayerPlugin, hud::HudPlugin))
+        .add_plugins((player::PlayerPlugin, hud::HudPlugin, quality::QualityPlugin))
         .add_systems(PreStartup, setup)
         .add_systems(Update, (world_render::follow_sky, world_render::animate_lava, auto_shot))
         .run();
 }
 
-fn setup(mut commands: Commands, args: Res<Args>, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>) {
+fn setup(mut commands: Commands, args: Res<Args>, mut quality: ResMut<quality::QualityRes>, mut settings: ResMut<player::Settings>, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>) {
     let t0 = std::time::Instant::now();
     let level = build_level(args.map.unwrap_or(MapId::Ciudad));
     let t1 = t0.elapsed();
@@ -77,20 +78,30 @@ fn setup(mut commands: Commands, args: Res<Args>, mut meshes: ResMut<Assets<Mesh
         t1.as_secs_f32() * 1000.0,
         (t0.elapsed() - t1).as_secs_f32() * 1000.0
     );
+    quality.fog = level.info.fog;
+    quality.dirty = true;
+    // en modo captura no se toma el mouse: la ventana puede quedar debajo de otras
+    settings.input = args.shot.is_none();
     let res = world_render::LevelRes(level);
     player::spawn_player(&mut commands, &res, args.at);
     commands.insert_resource(res);
     commands.insert_resource(looks);
 }
 
-/// Con `--shot`: captura a los ~3 s y sale.
-fn auto_shot(mut commands: Commands, args: Res<Args>, time: Res<Time>, mut done: Local<u8>, mut exit: MessageWriter<AppExit>) {
+/// Con `--shot`: captura a los ~3 s (y otra de control un poco después) y sale.
+fn auto_shot(mut commands: Commands, args: Res<Args>, time: Res<Time>, mut frames: Local<u32>, mut done: Local<u8>, mut exit: MessageWriter<AppExit>) {
     let Some(path) = &args.shot else { return };
     let t = time.elapsed_secs();
-    if *done == 0 && t > 3.0 {
+    *frames += 1;
+    if *done == 0 && t > 3.0 && *frames > 120 {
         commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path.clone()));
         *done = 1;
-    } else if *done == 1 && t > 4.5 {
+    } else if *done == 1 && *frames > 200 {
+        if std::env::var("ARENA_SHOT2").is_ok() {
+            commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path.replace(".png", "-b.png")));
+        }
+        *done = 2;
+    } else if *done == 2 && *frames > 260 {
         exit.write(AppExit::Success);
     }
 }

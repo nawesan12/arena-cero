@@ -9,7 +9,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Lado de las zonas en que se agrupan las cajas.
 const CHUNK: f32 = 48.0;
@@ -115,7 +115,7 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
     let a = info.a;
 
     // cajas: una malla por (material, sombra, zona)
-    let mut batches: HashMap<(Mat, bool, i32, i32), MeshBuf> = HashMap::new();
+    let mut batches: BTreeMap<(Mat, bool, i32, i32), MeshBuf> = BTreeMap::new();
     for vb in &w.visuals {
         let key = (vb.mat, vb.shadow, (vb.center.x / CHUNK).floor() as i32, (vb.center.z / CHUNK).floor() as i32);
         let wuv = looks.get(vb.mat, mats).wuv;
@@ -131,7 +131,7 @@ pub fn spawn_level(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mu
 
     // grupos móviles (la antena)
     for (gi, g) in w.groups.iter().enumerate() {
-        let mut by_mat: HashMap<Mat, MeshBuf> = HashMap::new();
+        let mut by_mat: BTreeMap<Mat, MeshBuf> = BTreeMap::new();
         for VisualBox { center, size, mat, .. } in &g.boxes {
             by_mat.entry(*mat).or_default().push_box(*center, *size, None);
         }

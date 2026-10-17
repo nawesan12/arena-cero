@@ -28,11 +28,12 @@ impl Plugin for PlayerPlugin {
 #[derive(Resource)]
 pub struct Settings {
     pub sens: f32,
+    pub input: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { sens: 1.8 }
+        Self { sens: 1.8, input: true }
     }
 }
 
@@ -91,7 +92,10 @@ pub fn spawn_player(commands: &mut Commands, level: &LevelRes, start: Option<[f3
     ));
 }
 
-fn grab_cursor(mut cursor: Single<&mut CursorOptions>, mouse: Res<ButtonInput<MouseButton>>, key: Res<ButtonInput<KeyCode>>) {
+fn grab_cursor(mut cursor: Single<&mut CursorOptions>, mouse: Res<ButtonInput<MouseButton>>, key: Res<ButtonInput<KeyCode>>, settings: Res<Settings>) {
+    if !settings.input {
+        return;
+    }
     if mouse.just_pressed(MouseButton::Left) && cursor.grab_mode == CursorGrabMode::None {
         cursor.visible = false;
         cursor.grab_mode = CursorGrabMode::Locked;

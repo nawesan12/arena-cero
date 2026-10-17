@@ -9,6 +9,7 @@ pub mod maps;
 pub mod mat;
 pub mod player;
 pub mod rng;
+pub mod weapons;
 pub mod world;
 
 pub use glam::{Vec3, vec3};
